@@ -21,6 +21,8 @@ private val LOGGER = KtorSimpleLogger("io.ktor.client.plugins.HttpPlainText")
 
 /**
  * Charset configuration for [HttpPlainText] plugin.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.HttpPlainTextConfig)
  */
 @KtorDsl
 public class HttpPlainTextConfig {
@@ -29,6 +31,8 @@ public class HttpPlainTextConfig {
 
     /**
      * Add [charset] to allowed list with selected [quality].
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.HttpPlainTextConfig.register)
      */
     public fun register(charset: Charset, quality: Float? = null) {
         quality?.let { check(it in 0.0..1.0) }
@@ -46,12 +50,16 @@ public class HttpPlainTextConfig {
      * Explicit [Charset] for sending content.
      *
      * Use first with the highest quality from [register] charset if null.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.HttpPlainTextConfig.sendCharset)
      */
     public var sendCharset: Charset? = null
 
     /**
      * Fallback charset for the response.
      * Use it if no charset specified.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.HttpPlainTextConfig.responseCharsetFallback)
      */
     public var responseCharsetFallback: Charset = Charsets.UTF_8
 }
@@ -61,6 +69,8 @@ public class HttpPlainTextConfig {
  * and processes the response body as [String].
  *
  * To configure charsets set following properties in [HttpPlainText.Config].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.HttpPlainText)
  */
 public val HttpPlainText: ClientPlugin<HttpPlainTextConfig> =
     createClientPlugin("HttpPlainText", ::HttpPlainTextConfig) {
@@ -106,7 +116,6 @@ public val HttpPlainText: ClientPlugin<HttpPlainTextConfig> =
             return TextContent(content, contentType.withCharset(charset))
         }
 
-        @Suppress("DEPRECATION")
         fun read(call: HttpClientCall, body: Input): String {
             val actualCharset = call.response.charset() ?: responseCharsetFallback
             LOGGER.trace("Reading response body for ${call.request.url} as String with charset $actualCharset")
@@ -160,6 +169,8 @@ internal object RenderRequestHook : ClientHook<suspend (HttpRequestBuilder, Any)
  *     }
  * }
  * ```
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.Charsets)
  */
 @Suppress("FunctionName")
 public fun HttpClientConfig<*>.Charsets(block: HttpPlainTextConfig.() -> Unit) {

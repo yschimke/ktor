@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.tests
@@ -7,11 +7,15 @@ package io.ktor.client.tests
 import io.ktor.client.*
 import io.ktor.client.engine.apache.*
 import io.ktor.client.request.*
-import io.ktor.client.tests.utils.*
-import kotlinx.coroutines.*
-import org.apache.http.*
-import java.net.*
-import kotlin.test.*
+import io.ktor.client.test.base.*
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.io.IOException
+import java.net.ServerSocket
+import kotlin.test.Test
+import kotlin.test.assertFailsWith
 
 @Suppress("BlockingMethodInNonBlockingContext", "ControlFlowWithEmptyBody")
 class ExceptionsJvmTest {
@@ -21,7 +25,7 @@ class ExceptionsJvmTest {
         val client = HttpClient(Apache)
 
         client.use {
-            assertFailsWith<ConnectionClosedException> {
+            assertFailsWith<IOException> {
                 it.get("$TCP_SERVER/errors/few-bytes")
             }
         }
@@ -55,7 +59,7 @@ class ExceptionsJvmTest {
 
         HttpClient(Apache).use { client ->
             repeat(100) {
-                assertFailsWith<ConnectionClosedException> {
+                assertFailsWith<IOException> {
                     client.get("http://127.0.0.1:$port")
                 }
             }

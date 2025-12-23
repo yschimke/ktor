@@ -4,16 +4,20 @@
 
 package io.ktor.tests.server.testing
 
+import io.ktor.client.network.sockets.*
+import io.ktor.client.plugins.*
 import io.ktor.client.plugins.websocket.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
+import io.ktor.http.*
+import io.ktor.http.content.*
 import io.ktor.server.application.*
-import io.ktor.server.config.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.testing.*
 import io.ktor.server.websocket.*
 import io.ktor.util.*
+import io.ktor.utils.io.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.*
@@ -25,18 +29,18 @@ import io.ktor.client.plugins.websocket.WebSockets as ClientWebSockets
 class TestApplicationTestJvm {
 
     @Test
-    fun testDefaultConfig() = testApplication {
+    fun testDefaultConfigDoesNotLoad() = testApplication {
         application {
             val config = environment.config
             routing {
                 get("a") {
-                    call.respond(config.property("ktor.test").getString())
+                    call.respond(config.propertyOrNull("ktor.test").toString())
                 }
             }
         }
 
         val response = client.get("a")
-        assertEquals("test_value", response.bodyAsText())
+        assertEquals("null", response.bodyAsText())
     }
 
     @Test
@@ -90,7 +94,7 @@ class TestApplicationTestJvm {
 
     @Test
     fun testCustomEnvironmentKeepsDefaultProperties() = testApplication {
-        environment { }
+        configure("application-custom.conf")
         routing {
             val config = environment.config
             get("a") {
@@ -99,14 +103,26 @@ class TestApplicationTestJvm {
         }
 
         val response = client.get("a")
+        assertEquals("another_test_value", response.bodyAsText())
+    }
+
+    @Test
+    fun testExplicitDefaultConfig() = testApplication {
+        configure()
+        routing {
+            val config = environment.config
+            get {
+                call.respond(config.property("ktor.test").getString())
+            }
+        }
+
+        val response = client.get("/")
         assertEquals("test_value", response.bodyAsText())
     }
 
     @Test
     fun testCustomConfig() = testApplication {
-        environment {
-            config = ApplicationConfig("application-custom.conf")
-        }
+        configure("application-custom.conf")
         routing {
             val config = environment.config
             get {
@@ -120,9 +136,7 @@ class TestApplicationTestJvm {
 
     @Test
     fun testCustomYamlConfig() = testApplication {
-        environment {
-            config = ApplicationConfig("application-custom.yaml")
-        }
+        configure("application-custom.yaml")
         routing {
             val config = environment.config
             get {
@@ -136,18 +150,33 @@ class TestApplicationTestJvm {
 
     @Test
     fun testConfigLoadsModules() = testApplication {
-        environment {
-            config = ApplicationConfig("application-with-modules.conf")
-        }
-
+        configure("application-with-modules.conf")
         val response = client.get("/")
         assertEquals("OK FROM MODULE", response.bodyAsText())
     }
 
     @Test
+    fun configureMultipleFiles() = testApplication {
+        configure(
+            "application.conf",
+            "application-custom.yaml",
+            "application-with-modules.conf",
+        )
+        routing {
+            val config = environment.config
+            get("/test") {
+                call.respond(config.property("ktor.test").getString())
+            }
+        }
+
+        assertEquals("OK FROM MODULE", client.get("/").bodyAsText())
+        assertEquals("another_test_value", client.get("/test").bodyAsText())
+    }
+
+    @Test
     fun testExternalServicesCustomConfig() = testApplication {
-        environment {
-            config = ApplicationConfig("application-custom.conf")
+        configure("application-custom.conf") {
+            put("config.test", "other")
         }
         externalServices {
             hosts("http://www.google.com") {
@@ -174,7 +203,7 @@ class TestApplicationTestJvm {
                 error = exception
             }
         }
-        testApplicationProperties {
+        serverConfig {
             parentCoroutineContext = exceptionHandler
         }
         application {
@@ -265,7 +294,7 @@ class TestApplicationTestJvm {
         override fun toString(): String = "=====$data====="
     }
 
-    public fun Application.module() {
+    fun Application.module() {
         routing {
             get { call.respond("OK FROM MODULE") }
         }
@@ -281,6 +310,50 @@ class TestApplicationTestJvm {
         }
         assertEquals("WebSocket connection failed", error.message)
     }
+
+    private fun testSocketTimeoutWrite(timeout: Long, expectException: Boolean) = testApplication {
+        routing {
+            post {
+                call.respond(HttpStatusCode.OK, call.request.receiveChannel().readRemaining().toString())
+            }
+        }
+
+        val clientWithTimeout = createClient {
+            install(HttpTimeout) {
+                socketTimeoutMillis = timeout
+            }
+        }
+
+        val body = object : OutgoingContent.WriteChannelContent() {
+            override suspend fun writeTo(channel: ByteWriteChannel) {
+                channel.writeByteArray("Hello".toByteArray())
+                channel.flush()
+                delay(300)
+                channel.writeByteArray("World".toByteArray())
+                channel.flush()
+            }
+        }
+
+        if (expectException) {
+            assertFailsWith<SocketTimeoutException> {
+                clientWithTimeout.post("/") {
+                    setBody(body)
+                }
+            }
+        } else {
+            clientWithTimeout.post("/") {
+                setBody(body)
+            }.apply {
+                assertEquals(HttpStatusCode.OK, status)
+            }
+        }
+    }
+
+    @Test
+    fun testSocketTimeoutWriteElapsed() = testSocketTimeoutWrite(100, true)
+
+    @Test
+    fun testSocketTimeoutWriteNotElapsed() = testSocketTimeoutWrite(1000, false)
 }
 
 class TestClass(val value: Int) : Serializable

@@ -11,6 +11,7 @@ import io.ktor.utils.io.pool.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.*
+import kotlinx.io.*
 import java.nio.*
 import java.nio.channels.*
 import kotlin.coroutines.*
@@ -18,6 +19,9 @@ import kotlin.coroutines.*
 /**
  * Class that continuously reads a [byteChannel] and
  * converts into Websocket [Frame] exposing them in [incoming].
+ *
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.websocket.WebSocketReader)
  *
  * @param maxFrameSize maximum frame size that could be read
  */
@@ -33,14 +37,13 @@ public class WebSocketReader(
 
     private val queue = Channel<Frame>(8)
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     private val readerJob = launch(CoroutineName("ws-reader"), start = CoroutineStart.ATOMIC) {
         val buffer = pool.borrow()
         try {
             readLoop(buffer)
         } catch (expected: ClosedChannelException) {
         } catch (expected: CancellationException) {
-        } catch (io: ChannelIOException) {
+        } catch (io: IOException) {
             queue.cancel()
         } catch (cause: FrameTooBigException) {
             // Bypass exception via queue to prevent cancellation and handle it on the top level.
@@ -58,6 +61,8 @@ public class WebSocketReader(
 
     /**
      * Channel receiving Websocket's [Frame] objects read from [byteChannel].
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.websocket.WebSocketReader.incoming)
      */
     public val incoming: ReceiveChannel<Frame> get() = queue
 

@@ -6,6 +6,8 @@ package io.ktor.util
 
 /**
  * Implementation of [ContentEncoder] using gzip algorithm
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.GZipEncoder)
  */
 public actual object GZipEncoder : ContentEncoder, Encoder by GZip {
     actual override val name: String = "gzip"
@@ -13,7 +15,18 @@ public actual object GZipEncoder : ContentEncoder, Encoder by GZip {
 
 /**
  * Implementation of [ContentEncoder] using deflate algorithm
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.DeflateEncoder)
  */
 public actual object DeflateEncoder : ContentEncoder, Encoder by Deflate {
     actual override val name: String = "deflate"
+}
+
+/**
+ * Implementation of [ContentEncoder] using zstd algorithm
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.ZstdEncoder)
+ */
+public actual class ZstdEncoder(compressionLevel: Int = 3) : ContentEncoder, Encoder by Zstd(compressionLevel) {
+    actual override val name: String = "zstd"
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2023 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.servlet.jakarta
@@ -10,12 +10,13 @@ import io.ktor.utils.io.pool.*
 import jakarta.servlet.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.*
+import kotlinx.coroutines.withTimeout
 import java.io.*
 import java.util.concurrent.*
+import kotlin.time.Duration
 
-@Suppress("DEPRECATION")
-internal fun CoroutineScope.servletWriter(output: ServletOutputStream): ReaderJob {
-    val writer = ServletWriter(output)
+internal fun CoroutineScope.servletWriter(output: ServletOutputStream, idleTimeout: Duration? = null): ReaderJob {
+    val writer = ServletWriter(output, idleTimeout)
     return reader(Dispatchers.IO, writer.channel) {
         writer.run()
     }
@@ -34,25 +35,17 @@ internal val ArrayPool = object : DefaultPool<ByteArray>(1024) {
 
 private const val MAX_COPY_SIZE = 512 * 1024 // 512K
 
-private class ServletWriter(val output: ServletOutputStream) : WriteListener {
+private class ServletWriter(val output: ServletOutputStream, val idleTimeout: Duration? = null) : WriteListener {
     val channel = ByteChannel()
 
     private val events = Channel<Unit>(2)
 
     suspend fun run() {
-        val buffer = ArrayPool.borrow()
         try {
             output.setWriteListener(this)
-            events.receive()
-            loop(buffer)
+            loop()
 
             finish()
-
-            // we shouldn't recycle it in finally
-            // because in case of error the buffer could be still hold by servlet container
-            // so we simply drop it as buffer leak has only limited performance impact
-            // (buffer will be collected by GC and pool will produce another one)
-            ArrayPool.recycle(buffer)
         } catch (t: Throwable) {
             onError(t)
         } finally {
@@ -68,27 +61,27 @@ private class ServletWriter(val output: ServletOutputStream) : WriteListener {
     }
 
     @Suppress("BlockingMethodInNonBlockingContext")
-    private suspend fun loop(buffer: ByteArray) {
+    private suspend fun loop() {
         if (channel.availableForRead == 0) {
             awaitReady()
             output.flush()
         }
 
         var copied = 0L
-        while (true) {
-            val rc = channel.readAvailable(buffer)
-            if (rc == -1) break
+        while (!channel.isClosedForRead) {
+            channel.read { buffer, start, end ->
+                val rc = end - start
+                copied += rc
+                if (copied > MAX_COPY_SIZE) {
+                    copied = 0
+                    yield()
+                }
 
-            copied += rc
-            if (copied > MAX_COPY_SIZE) {
-                copied = 0
-                yield()
+                awaitReady()
+                output.write(buffer, start, rc)
+                awaitReady()
+                rc
             }
-
-            awaitReady()
-            output.write(buffer, 0, rc)
-            awaitReady()
-
             if (channel.availableForRead == 0) output.flush()
         }
     }
@@ -100,7 +93,13 @@ private class ServletWriter(val output: ServletOutputStream) : WriteListener {
 
     private suspend fun awaitReadySuspend() {
         do {
-            events.receive()
+            if (idleTimeout == null) {
+                events.receive()
+            } else {
+                withTimeout(idleTimeout) {
+                    events.receive()
+                }
+            }
         } while (!output.isReady)
     }
 

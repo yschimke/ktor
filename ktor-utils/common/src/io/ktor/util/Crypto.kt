@@ -10,6 +10,7 @@ package io.ktor.util
 import io.ktor.utils.io.*
 import io.ktor.utils.io.charsets.*
 import io.ktor.utils.io.core.*
+import kotlinx.io.*
 
 private val digits = "0123456789abcdef".toCharArray()
 
@@ -17,14 +18,16 @@ internal const val NONCE_SIZE_IN_BYTES = 16
 
 /**
  * Encode [bytes] as a HEX string with no spaces, newlines and `0x` prefixes.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.hex)
  */
 public fun hex(bytes: ByteArray): String {
     val result = CharArray(bytes.size * 2)
     var resultIndex = 0
     val digits = digits
 
-    for (index in 0 until bytes.size) {
-        val b = bytes[index].toInt() and 0xff
+    for (element in bytes) {
+        val b = element.toInt() and 0xff
         result[resultIndex++] = digits[b shr 4]
         result[resultIndex++] = digits[b and 0x0f]
     }
@@ -34,10 +37,12 @@ public fun hex(bytes: ByteArray): String {
 
 /**
  * Decode bytes from HEX string. It should be no spaces and `0x` prefixes.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.hex)
  */
 public fun hex(s: String): ByteArray {
     val result = ByteArray(s.length / 2)
-    for (idx in 0 until result.size) {
+    for (idx in result.indices) {
         val srcIdx = idx * 2
         val high = s[srcIdx].toString().toInt(16) shl 4
         val low = s[srcIdx + 1].toString().toInt(16)
@@ -49,51 +54,69 @@ public fun hex(s: String): ByteArray {
 
 /**
  * Generates a nonce string. Could block if the system's entropy source is empty
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.generateNonce)
  */
 public expect fun generateNonce(): String
 
 /**
  * Generates a nonce bytes of [size]. Could block if the system's entropy source is empty
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.generateNonce)
  */
 public fun generateNonce(size: Int): ByteArray = buildPacket {
     while (this.size < size) {
         writeText(generateNonce())
     }
-}.readBytes(size)
+}.readByteArray(size)
 
 /**
  * Compute SHA-1 hash for the specified [bytes]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.sha1)
  */
 public expect fun sha1(bytes: ByteArray): ByteArray
 
 /**
  * Create [Digest] from specified hash [name].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.Digest)
  */
 @Suppress("FunctionName")
 public expect fun Digest(name: String): Digest
 
 /**
  * Stateful digest class specified to calculate digest.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.Digest)
  */
 public interface Digest {
     /**
      * Add [bytes] to digest value.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.Digest.plusAssign)
      */
     public operator fun plusAssign(bytes: ByteArray)
 
     /**
      * Reset [Digest] state.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.Digest.reset)
      */
     public fun reset()
 
     /**
      * Calculate digest bytes.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.Digest.build)
      */
     public suspend fun build(): ByteArray
 }
 
 /**
  * Calculate digest from current state and specified [bytes].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.build)
  */
 @InternalAPI
 public suspend fun Digest.build(bytes: ByteArray): ByteArray {
@@ -103,6 +126,8 @@ public suspend fun Digest.build(bytes: ByteArray): ByteArray {
 
 /**
  * Calculate digest from current state and specified [string].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.build)
  */
 @InternalAPI
 public suspend fun Digest.build(string: String, charset: Charset = Charsets.UTF_8): ByteArray {

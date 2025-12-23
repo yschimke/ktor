@@ -31,34 +31,49 @@ for other platforms, the corresponding tests for these should also be run. To se
 
 `./gradlew tasks`
 
-For Ktor to build correctly, a series of additional libraries/tools need to be installed, based on the operating
-system you're using for development:
+#### System requirements
+
+The project requires JDK 21.
+Make sure you have it installed before attempting to build the project.
+If you use IntelliJ IDEA, you should also select JDK 21 in **"Project Structure" > "Project" > "SDK"**
+
+Up to 12 GB of free RAM is required to build the project.
+This amount can be reduced by decreasing the `Xmx` value in `gradle.properties`.
+Read the comments in `gradle.properties` for more details.
+
+If targeting macOS and/or iOS, install `Xcode` and `Xcode command line tools` on macOS.
+
+<details>
+<summary>Requirements for Ktor before 3.1.0</summary>
+
+For versions of Ktor before 3.1.0 to build correctly,
+a series of additional libraries/tools need to be installed, based on the operating
+system you use for development:
 
 **Linux**
 
 Run the following commands to install `libcurl` and `libncurses`:
 
-```
-        sudo apt-get update
-        sudo apt-get install libncurses5 libncursesw5 libtinfo5
-        sudo apt-get install libcurl4-openssl-dev
+```bash
+sudo apt update
+sudo apt install libcurl4-openssl-dev libncurses-dev
 ```
 
 **macOS** 
 
-The easiest way to install `libcurl` and 'libncurses` on macOS is to use [Homebrew](https://brew.sh). Run the following commands:
+The easiest way to install `libcurl` and `libncurses` on macOS is to use [Homebrew](https://brew.sh).
+Run the following commands:
 
+```bash
+brew install curl ncurses
 ```
-    brew install curl
-    brew install ncurses
-```
-
-If targeting macOS and/or iOS, install `Xcode` and `Xcode command line tools` on macOS.
 
 **Windows**
 
 For development on Windows, it is recommended to use [Cygwin](http://cygwin.com/) which will provide the necessary
-libaries such as `libncurses`.
+libraries such as `libncurses`.
+
+</details>
 
 #### Referencing artifacts locally
 
@@ -68,7 +83,7 @@ used for debugging purposes. One of these is to publish to [Maven Local](https:/
 by adding the following line to your `settings.gradle(.kts)` file:
 
 ```groovy
-    includeBuild("/PATH/TO/KTOR")
+includeBuild("/PATH/TO/KTOR")
 ```
 
 #### Importing into IntelliJ IDEA
@@ -76,6 +91,18 @@ by adding the following line to your `settings.gradle(.kts)` file:
 To import into IntelliJ IDEA, just open up the `Ktor` project folder. IntelliJ IDEA should automatically detect
 that it is a Gradle project and import it. It's important that you make sure that all building and test operations
 are delegated to Gradle under [Gradle Settings](https://www.jetbrains.com/help/idea/gradle-settings.html).
+
+#### Working with Rust-based Modules Locally
+
+The `ktor-client-webrtc-rs` module utilizes Rust components internally. To develop with this module in your local environment, you'll need to complete the following setup steps:
+
+**Prerequisites:**
+- Install Rust and Cargo on your system
+- Configure your build environment by adding `ktorbuild.rustCompilation=true` to your global `gradle.properties` file
+  > ⚠️ **Important:** This setting should remain local to your development environment—do not commit this change to version control
+
+**Additional Dependencies:**
+Depending on your target platforms, you may need to install additional dependencies for Rust cross-compilation. For comprehensive guidance on cross-compilation requirements and troubleshooting, refer to the [Gobley cross-compilation documentation](https://gobley.dev/docs/cross-compilation-tips).
 
 ### Pull Requests
 
@@ -97,13 +124,14 @@ A few things to remember:
 
 * Your code should conform to
   the official [Kotlin code style guide](https://kotlinlang.org/docs/reference/coding-conventions.html)
-  except that star imports should be always enabled
-  (ensure Preferences | Editor | Code Style | Kotlin, tab **Imports**, both `Use import with '*'` should be checked).
+  except that star imports should always be used for `io.ktor.*` packages.
+  Code style is managed by [EditorConfig](https://www.jetbrains.com/help/idea/editorconfig.html),
+  so make sure the EditorConfig plugin is enabled in the IDE.
 * Every new source file should have a copyright header.
 * Every public API (including functions, classes, objects and so on) should be documented,
   every parameter, property, return types and exceptions should be described properly.
-* A questionable and new API should be marked with the `@KtorExperimentalAPI` annotation.
-* A Public API that is not intended to be used by end-users that couldn't be made private/internal due to technical reasons,
+* A Public API which is not intended to be used by end-users that couldn't be made private/internal due to technical
+  reasons,
   should be marked with `@InternalAPI` annotation.
 
 ### Commit messages

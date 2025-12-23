@@ -8,9 +8,12 @@ import io.ktor.network.tls.extensions.*
 
 /**
  * TLS handshake record type
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.network.tls.TLSHandshakeType)
+ *
  * @property code numeric type code
  */
-@Suppress("KDocMissingDocumentation")
+
 public enum class TLSHandshakeType(public val code: Int) {
     HelloRequest(0x00),
     ClientHello(0x01),
@@ -24,10 +27,12 @@ public enum class TLSHandshakeType(public val code: Int) {
     Finished(0x14);
 
     public companion object {
-        private val byCode = Array(256) { idx -> values().firstOrNull { it.code == idx } }
+        private val byCode = Array(256) { idx -> entries.firstOrNull { it.code == idx } }
 
         /**
          * Find handshake type instance by its numeric [code] or fail
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.network.tls.TLSHandshakeType.Companion.byCode)
          */
         public fun byCode(code: Int): TLSHandshakeType = when (code) {
             in 0..0xff -> byCode[code]
@@ -38,19 +43,24 @@ public enum class TLSHandshakeType(public val code: Int) {
 
 /**
  * Server key exchange type with it's [code]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.network.tls.ServerKeyExchangeType)
+ *
  * @property code numeric exchange type code
  */
-@Suppress("KDocMissingDocumentation")
+
 public enum class ServerKeyExchangeType(public val code: Int) {
     ExplicitPrime(1),
     ExplicitChar(2),
     NamedCurve(3);
 
     public companion object {
-        private val byCode = Array(256) { idx -> values().firstOrNull { it.code == idx } }
+        private val byCode = Array(256) { idx -> entries.firstOrNull { it.code == idx } }
 
         /**
          * Find an instance of [ServerKeyExchangeType] by its numeric code or fail
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.network.tls.ServerKeyExchangeType.Companion.byCode)
          */
         public fun byCode(code: Int): ServerKeyExchangeType {
             val result = if (code in 0..0xff) byCode[code] else null

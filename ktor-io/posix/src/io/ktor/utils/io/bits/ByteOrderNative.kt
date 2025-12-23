@@ -1,29 +1,43 @@
+/*
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 @file:Suppress("NOTHING_TO_INLINE")
 
 package io.ktor.utils.io.bits
 
 /**
  * Reverse number's byte order
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.bits.reverseByteOrder)
  */
 public actual fun Short.reverseByteOrder(): Short = swap(this)
 
 /**
  * Reverse number's byte order
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.bits.reverseByteOrder)
  */
 public actual fun Int.reverseByteOrder(): Int = swap(this)
 
 /**
  * Reverse number's byte order
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.bits.reverseByteOrder)
  */
 public actual fun Long.reverseByteOrder(): Long = swap(this)
 
 /**
  * Reverse number's byte order
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.bits.reverseByteOrder)
  */
 public actual fun Float.reverseByteOrder(): Float = swap(this)
 
 /**
  * Reverse number's byte order
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.bits.reverseByteOrder)
  */
 public actual fun Double.reverseByteOrder(): Double = swap(this)
 

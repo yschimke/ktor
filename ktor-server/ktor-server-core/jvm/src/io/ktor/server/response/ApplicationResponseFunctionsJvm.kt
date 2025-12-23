@@ -9,12 +9,15 @@ import io.ktor.http.content.*
 import io.ktor.server.application.*
 import io.ktor.server.http.content.*
 import java.io.*
+import java.nio.file.*
 
 /**
  * Respond with text content writer.
  *
  * The [writer] parameter will be called later when engine is ready to produce content.
  * Provided [Writer] will be closed automatically.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.response.respondTextWriter)
  */
 public suspend fun ApplicationCall.respondTextWriter(
     contentType: ContentType? = null,
@@ -30,6 +33,8 @@ public suspend fun ApplicationCall.respondTextWriter(
  *
  * The [producer] parameter will be called later when engine is ready to produce content. You don't need to close it.
  * Provided [OutputStream] will be closed automatically.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.response.respondOutputStream)
  */
 public suspend fun ApplicationCall.respondOutputStream(
     contentType: ContentType? = null,
@@ -42,6 +47,8 @@ public suspend fun ApplicationCall.respondOutputStream(
 
 /**
  * Responds to a client with a contents of a file with the name [fileName] in the [baseDir] folder
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.response.respondFile)
  */
 public suspend fun ApplicationCall.respondFile(
     baseDir: File,
@@ -53,10 +60,36 @@ public suspend fun ApplicationCall.respondFile(
 }
 
 /**
+ * Responds to a client with a contents of a path designated by [relativePath] in the [baseDir] folder
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.response.respondPath)
+ */
+public suspend fun ApplicationCall.respondPath(
+    baseDir: Path,
+    relativePath: Path,
+    configure: OutgoingContent.() -> Unit = {}
+) {
+    val message = LocalPathContent(baseDir, relativePath).apply(configure)
+    respond(message)
+}
+
+/**
  * Responds to a client with a contents of a [file]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.response.respondFile)
  */
 public suspend fun ApplicationCall.respondFile(file: File, configure: OutgoingContent.() -> Unit = {}) {
     val message = LocalFileContent(file).apply(configure)
+    respond(message)
+}
+
+/**
+ * Responds to a client with a contents of a [path]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.response.respondPath)
+ */
+public suspend fun ApplicationCall.respondPath(path: Path, configure: OutgoingContent.() -> Unit = {}) {
+    val message = LocalPathContent(path).apply(configure)
     respond(message)
 }
 
@@ -65,6 +98,8 @@ public suspend fun ApplicationCall.respondFile(file: File, configure: OutgoingCo
  *
  * The [writer] parameter will be called later when engine is ready to produce content.
  * Provided [Writer] will be closed automatically.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.response.respondTextWriter)
  */
 public suspend fun ApplicationCall.respondTextWriter(
     contentType: ContentType? = null,
@@ -81,6 +116,8 @@ public suspend fun ApplicationCall.respondTextWriter(
  *
  * The [producer] parameter will be called later when engine is ready to produce content. You don't need to close it.
  * Provided [OutputStream] will be closed automatically.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.response.respondOutputStream)
  */
 public suspend fun ApplicationCall.respondOutputStream(
     contentType: ContentType? = null,

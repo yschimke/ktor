@@ -1,11 +1,12 @@
+@file:Suppress("ktlint:standard:max-line-length")
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.tests.http
 
 import io.ktor.http.*
-import kotlin.random.*
+import kotlin.random.Random
 import kotlin.test.*
 
 class UrlTest {
@@ -17,13 +18,33 @@ class UrlTest {
         assertEquals(443, url.port)
         assertEquals(443, url.protocol.defaultPort)
         assertEquals("ktor.io", url.host)
-        assertEquals(listOf("", "quickstart", ""), url.pathSegments)
+        assertEquals(listOf("", "quickstart", ""), url.rawSegments)
         assertEquals(parametersOf("query" to listOf("string"), "param" to listOf("value", "value2")), url.parameters)
         assertEquals("fragment", url.fragment)
         assertEquals(null, url.user)
         assertEquals(null, url.password)
         assertEquals(false, url.trailingQuery)
         assertEquals(urlString, "$url")
+    }
+
+    @Test
+    fun testSegments() {
+        val full = Url("https://ktor.io/docs")
+        val absoluteWithTrailing = Url("/docs/")
+        val absolute = Url("/docs")
+        val relative = Url("docs")
+        val relativeWithTrailing = Url("docs/")
+        val empty = Url("https://ktor.io")
+        val emptyWithTrailing = Url("http://ktor.io/")
+
+        val expected = listOf("docs")
+        assertContentEquals(expected, full.segments)
+        assertContentEquals(expected, absolute.segments)
+        assertContentEquals(expected, absoluteWithTrailing.segments)
+        assertContentEquals(expected, relative.segments)
+        assertContentEquals(expected, relativeWithTrailing.segments)
+        assertContentEquals(emptyList<String>(), empty.segments)
+        assertContentEquals(emptyList(), emptyWithTrailing.segments)
     }
 
     @Test
@@ -66,7 +87,7 @@ class UrlTest {
         assertEquals("https", url.protocol.name)
         assertEquals(8080, url.port)
         assertEquals("[2001:0db8:85a3:0000:0000:8a2e:0370:7334]", url.host)
-        assertEquals(listOf("", "hello"), url.pathSegments)
+        assertEquals(listOf("", "hello"), url.rawSegments)
         assertEquals(null, url.user)
         assertEquals(null, url.password)
         assertEquals(false, url.trailingQuery)
@@ -80,7 +101,7 @@ class UrlTest {
 
         assertEquals("http", url.protocol.name)
         assertEquals("127.0.0.1", url.host)
-        assertEquals(listOf("", "hello"), url.pathSegments)
+        assertEquals(listOf("", "hello"), url.rawSegments)
         assertEquals(null, url.user)
         assertEquals(null, url.password)
         assertEquals(false, url.trailingQuery)
@@ -90,6 +111,8 @@ class UrlTest {
     /**
      * https://tools.ietf.org/html/rfc1738#section-5
      * hsegment = *[ uchar | ";" | ":" | "@" | "&" | "=" ]
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.tests.http.UrlTest.testPath)
      */
     @Test
     fun testPath() {
@@ -99,7 +122,7 @@ class UrlTest {
             assertEquals("http", url.protocol.name)
             assertNull(url.user)
             assertNull(url.password)
-            assertEquals(listOf("", "foo${case}bar"), url.pathSegments)
+            assertEquals(listOf("", "foo${case}bar"), url.rawSegments)
 
             assertEquals("http://localhost/foo${case}bar", url.toString())
         }
@@ -117,7 +140,7 @@ class UrlTest {
 
         assertEquals("http://httpbin.org/response-headers?message=foo%25bar", urlBuilder().buildString())
         assertEquals("http://httpbin.org/response-headers?message=foo%25bar", url.toString())
-        assertEquals(listOf("", "response-headers"), url.pathSegments)
+        assertEquals(listOf("", "response-headers"), url.rawSegments)
         assertEquals("/response-headers?message=foo%25bar", url.fullPath)
     }
 
@@ -134,8 +157,9 @@ class UrlTest {
 
     @Test
     fun testDecodedEqualsInQueryValue() {
-        val urlString = "https://host.com/path?" +
-            "response-content-disposition=attachment%3Bfilename%3D%22ForgeGradle-1.2-1.0.0-javadoc.jar%22"
+        val urlString =
+            "https://host.com/path?" +
+                "response-content-disposition=attachment%3Bfilename%3D%22ForgeGradle-1.2-1.0.0-javadoc.jar%22"
 
         val url = URLBuilder().takeFrom(urlString).build()
 
@@ -167,7 +191,7 @@ class UrlTest {
         with(url) {
             assertEquals(URLProtocol.HTTPS, protocol)
             assertEquals("www.test.com", host)
-            assertEquals(emptyList(), pathSegments)
+            assertEquals(emptyList(), rawSegments)
             assertEquals("https://www.test.com?test=ok&authtoken=testToken", url.toString())
         }
     }
@@ -230,7 +254,7 @@ class UrlTest {
         val result = Url(expectedUrl)
         assertEquals("file", result.protocol.name)
         assertEquals("", result.host)
-        assertEquals(listOf("", "var", "www"), result.pathSegments)
+        assertEquals(listOf("", "var", "www"), result.rawSegments)
         assertEquals(expectedUrl, result.toString())
     }
 
@@ -240,8 +264,17 @@ class UrlTest {
         val result = Url(expectedUrl)
         assertEquals("file", result.protocol.name)
         assertEquals("localhost", result.host)
-        assertEquals(listOf("", "var", "www"), result.pathSegments)
+        assertEquals(listOf("", "var", "www"), result.rawSegments)
         assertEquals(expectedUrl, result.toString())
+    }
+
+    @Test
+    fun testForFileProtocolMinimalRepresentation() {
+        val result = Url("file:/var/www")
+        assertEquals("file", result.protocol.name)
+        assertEquals("", result.host)
+        assertEquals(listOf("var", "www"), result.rawSegments)
+        assertEquals("file:///var/www", result.toString())
     }
 
     @Test
@@ -281,7 +314,7 @@ class UrlTest {
         val urlString = "https://ktor.io/quickstar%25t?query=strin%25g"
         val url = Url(urlString)
         assertEquals("/quickstar%25t", url.encodedPath)
-        assertEquals("quickstar%t", url.pathSegments[1])
+        assertEquals("quickstar%t", url.rawSegments[1])
         assertEquals("query=strin%25g", url.encodedQuery)
         assertEquals("strin%g", url.parameters["query"])
         assertEquals("/quickstar%25t?query=strin%25g", url.encodedPathAndQuery)
@@ -297,8 +330,9 @@ class UrlTest {
 
     @Test
     fun testUrlToStringKeepsEncoding() {
-        val urlString = "https://use%25r:passwor%25d@ktor.io/quickstar%25t/" +
-            "?query=strin%25g&param=value&param=value2#fragmen%25t"
+        val urlString =
+            "https://use%25r:passwor%25d@ktor.io/quickstar%25t/" +
+                "?query=strin%25g&param=value&param=value2#fragmen%25t"
         val url = Url(urlString)
         assertEquals(urlString, "$url")
     }
@@ -315,5 +349,121 @@ class UrlTest {
         assertTrue(Url("hello").isRelativePath)
         assertTrue(Url("").isRelativePath)
         assertTrue(Url("hello/world").isRelativePath)
+    }
+
+    @Test
+    fun testParseUrl() {
+        val url = parseUrl("https://ktor.io/docs")
+        assertNotNull(url)
+        assertEquals("https", url.protocol.name)
+        assertEquals("ktor.io", url.host)
+
+        assertEquals(null, parseUrl("incorrecturl"))
+        assertEquals(null, parseUrl("http://localhost:7000Value"))
+    }
+
+    @Test
+    fun testAboutUrl() {
+        val aboutBlankUrl = Url("about:blank")
+        assertEquals("about:blank", aboutBlankUrl.toString())
+        assertEquals("about", aboutBlankUrl.protocol.name)
+        assertEquals("blank", aboutBlankUrl.host)
+
+        val aboutVersionUrl = Url("about:version")
+        assertEquals("about:version", aboutVersionUrl.toString())
+        assertEquals("about", aboutVersionUrl.protocol.name)
+        assertEquals("version", aboutVersionUrl.host)
+
+        val urlHttp = Url("about")
+        assertEquals("localhost", urlHttp.host)
+        assertEquals(URLProtocol.HTTP, urlHttp.protocol)
+        assertTrue(urlHttp.rawSegments.contains("about"))
+    }
+
+    @Test
+    fun testTelUrl() {
+        val globalTelUrl = Url("tel:+14085555555")
+        assertEquals("tel:+14085555555", globalTelUrl.toString())
+        assertEquals("tel", globalTelUrl.protocol.name)
+        assertEquals("+14085555555", globalTelUrl.host)
+
+        val localTelUrlWithContext = Url("tel:863-1234;phone-context=+1-914-555")
+        assertEquals("tel:863-1234;phone-context=+1-914-555", localTelUrlWithContext.toString())
+        assertEquals("tel", localTelUrlWithContext.protocol.name)
+        assertEquals("863-1234;phone-context=+1-914-555", localTelUrlWithContext.host)
+
+        val telUrlWithParams = Url("tel:+1-408-555-5555;extension=ext;phone-context=context")
+        assertEquals("tel:+1-408-555-5555;extension=ext;phone-context=context", telUrlWithParams.toString())
+        assertEquals("tel", telUrlWithParams.protocol.name)
+        assertEquals("+1-408-555-5555;extension=ext;phone-context=context", telUrlWithParams.host)
+    }
+
+    @Test
+    fun testDataUrl() {
+        val dataUrlString =
+            "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' " +
+                "viewBox='0 0 512 512'%3E%3Cpath d='M224%20387.814V512L32 320l192-192v126.912C447.375 260.152 437.794 " +
+                "103.016 380.93 0 521.287 151.707 491.48 394.785 224 387.814z'/%3E%3C/svg%3E"
+        val url = Url(dataUrlString)
+
+        assertEquals("data", url.protocol.name)
+        assertEquals(
+            "image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath " +
+                "d='M224%20387.814V512L32 320l192-192v126.912C447.375 260.152 437.794 103.016 380.93 0 521.287 151.707 " +
+                "491.48 394.785 224 387.814z'/%3E%3C/svg%3E",
+            url.host
+        )
+        assertEquals(dataUrlString, url.toString())
+    }
+
+    @Test
+    fun testDataUrlWithBase64() {
+        val dataUrlString =
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA" + "ABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAPoAAAD6AG" +
+                "1e1JrAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAIdJREFUOI3djzEKwzAMANXEYPDSP" +
+                "/RDPPlD7adMWQoFTw5ZDMYggwZjhU6FAj2wg6SrQYgxzk" +
+                "hyOSPJQYx/ISL3iNiGYVjN8zw551R0AaC19l6W5dl7fy2llO" +
+                "R9ABfApfeepJSqLlprL8MwkJnvOeckxqAxBgBUVRVLKalq4XEMALZt27fWbj/u8QnQIokgVhJGsgAAAABJRU5ErkJggg=="
+        val url = Url(dataUrlString)
+
+        assertEquals("data", url.protocol.name)
+        assertEquals(
+            "image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYA" + "AAAf8/9hAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAG" +
+                "XRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAIdJR" +
+                "EFUOI3djzEKwzAMANXEYPDSP/RDPPlD7adMWQoFTw5ZDMYggw" +
+                "ZjhU6FAj2wg6SrQYgxzkhyOSPJQYx/ISL3iNiGYVjN8zw551R0AaC19l6W" +
+                "5dl7fy2llOR9ABfApfeepJSqLlprL8MwkJnvOeckxqAxBgBUVRVLKalq" +
+                "4XEMALZt27fWbj/u8QnQIokgVhJGsgAAAABJRU5ErkJggg==",
+            url.host
+        )
+        assertEquals(dataUrlString, url.toString())
+    }
+
+    @Test
+    fun testSimpleDataUrl() {
+        val dataUrlString = "data:,Hello%2C%20World!"
+        val url = Url(dataUrlString)
+
+        assertEquals("data", url.protocol.name)
+        assertEquals(",Hello%2C%20World!", url.host)
+        assertEquals(dataUrlString, url.toString())
+    }
+
+    @Test
+    fun `parsing and rendering data url keeps result`() {
+        val dataUrls = listOf(
+            "data:,Hello%2C%20World!",
+            "data:text/plain;charset=UTF-8,Hello%2C%20World!",
+            "data:text/html;charset=UTF-8,<h1>Hello%2C%20World!</h1>",
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAA" +
+                "ABCAYAAAAfFcSJAAAADUlEQVR42mNk+P+/HgAFeAJ5gNOQJQAAAABJRU5ErkJggg==",
+            "data:application/octet-stream;base64,VGhpcyBpcyBhIHRlc3Qgc3RyaW5nLg=="
+        )
+
+        for (originalUrl in dataUrls) {
+            val parsed = Url(originalUrl)
+            val rendered = parsed.toString()
+            assertEquals(originalUrl, rendered, "Data URL should be preserved after parsing and rendering")
+        }
     }
 }

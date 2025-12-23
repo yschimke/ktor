@@ -11,6 +11,8 @@ internal val ROOT_PATH = listOf("")
 /**
  * Take url parts from [urlString]
  * throws [URLParserException]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.takeFrom)
  */
 public fun URLBuilder.takeFrom(urlString: String): URLBuilder {
     if (urlString.isBlank()) return this
@@ -24,6 +26,8 @@ public fun URLBuilder.takeFrom(urlString: String): URLBuilder {
 
 /**
  * Thrown when failed to parse URL
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.URLParserException)
  */
 public class URLParserException(urlString: String, cause: Throwable) : IllegalStateException(
     "Fail to parse url: $urlString",
@@ -42,6 +46,12 @@ internal fun URLBuilder.takeFromUnsafe(urlString: String): URLBuilder {
         startIndex += schemeLength + 1
     }
 
+    // Special handling for data URLs
+    if (protocol.name == "data") {
+        host = urlString.substring(startIndex, endIndex)
+        return this
+    }
+
     // Auth & Host
     val slashCount = count(urlString, startIndex, endIndex, '/')
     startIndex += slashCount
@@ -54,6 +64,18 @@ internal fun URLBuilder.takeFromUnsafe(urlString: String): URLBuilder {
     if (protocol.name == "mailto") {
         require(slashCount == 0)
         parseMailto(urlString, startIndex, endIndex)
+        return this
+    }
+
+    if (protocol.name == "about") {
+        require(slashCount == 0)
+        host = urlString.substring(startIndex, endIndex)
+        return this
+    }
+
+    if (protocol.name == "tel") {
+        require(slashCount == 0)
+        host = urlString.substring(startIndex, endIndex)
         return this
     }
 
@@ -124,6 +146,10 @@ internal fun URLBuilder.takeFromUnsafe(urlString: String): URLBuilder {
 
 private fun URLBuilder.parseFile(urlString: String, startIndex: Int, endIndex: Int, slashCount: Int) {
     when (slashCount) {
+        1 -> {
+            host = ""
+            encodedPath = urlString.substring(startIndex, endIndex)
+        }
         2 -> {
             val nextSlash = urlString.indexOf('/', startIndex)
             if (nextSlash == -1 || nextSlash == endIndex) {
@@ -179,10 +205,10 @@ private fun URLBuilder.fillHost(urlString: String, startIndex: Int, endIndex: In
 
     host = urlString.substring(startIndex, colonIndex)
 
-    if (colonIndex + 1 < endIndex) {
-        port = urlString.substring(colonIndex + 1, endIndex).toInt()
+    port = if (colonIndex + 1 < endIndex) {
+        urlString.substring(colonIndex + 1, endIndex).toInt()
     } else {
-        port = DEFAULT_PORT
+        DEFAULT_PORT
     }
 }
 

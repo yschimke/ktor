@@ -1,6 +1,6 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.server.servlet
 
@@ -15,8 +15,8 @@ import java.io.*
 import java.lang.reflect.*
 import javax.servlet.http.*
 import kotlin.coroutines.*
+import kotlin.time.Duration
 
-@Suppress("KDocMissingDocumentation")
 public open class AsyncServletApplicationCall(
     application: Application,
     servletRequest: HttpServletRequest,
@@ -25,13 +25,35 @@ public open class AsyncServletApplicationCall(
     userContext: CoroutineContext,
     upgrade: ServletUpgrade,
     parentCoroutineContext: CoroutineContext,
-    managedByEngineHeaders: Set<String> = emptySet()
+    managedByEngineHeaders: Set<String> = emptySet(),
+    idleTimeout: Duration? = null,
 ) : BaseApplicationCall(application), CoroutineScope {
+    @Deprecated("", level = DeprecationLevel.HIDDEN)
+    public constructor(
+        application: Application,
+        servletRequest: HttpServletRequest,
+        servletResponse: HttpServletResponse,
+        engineContext: CoroutineContext,
+        userContext: CoroutineContext,
+        upgrade: ServletUpgrade,
+        parentCoroutineContext: CoroutineContext,
+        managedByEngineHeaders: Set<String> = emptySet(),
+    ) : this(
+        application,
+        servletRequest,
+        servletResponse,
+        engineContext,
+        userContext,
+        upgrade,
+        parentCoroutineContext,
+        managedByEngineHeaders,
+        idleTimeout = null
+    )
 
     override val coroutineContext: CoroutineContext = parentCoroutineContext
 
     override val request: AsyncServletApplicationRequest =
-        AsyncServletApplicationRequest(this, servletRequest, parentCoroutineContext + engineContext)
+        AsyncServletApplicationRequest(this, servletRequest, parentCoroutineContext + engineContext, idleTimeout)
 
     override val response: ServletApplicationResponse by lazy {
         AsyncServletApplicationResponse(
@@ -42,6 +64,7 @@ public open class AsyncServletApplicationCall(
             userContext,
             upgrade,
             parentCoroutineContext + engineContext,
+            idleTimeout,
             managedByEngineHeaders
         ).also {
             putResponseAttribute(it)
@@ -53,11 +76,11 @@ public open class AsyncServletApplicationCall(
     }
 }
 
-@Suppress("KDocMissingDocumentation")
 public class AsyncServletApplicationRequest(
     call: PipelineCall,
     servletRequest: HttpServletRequest,
-    override val coroutineContext: CoroutineContext
+    override val coroutineContext: CoroutineContext,
+    private val idleTimeout: Duration? = null,
 ) : ServletApplicationRequest(call, servletRequest), CoroutineScope {
 
     private var upgraded = false
@@ -65,8 +88,10 @@ public class AsyncServletApplicationRequest(
     private val inputStreamChannel by lazy {
         if (!upgraded) {
             val contentLength = servletRequest.contentLength
-            servletReader(servletRequest.inputStream, contentLength).channel
-        } else ByteReadChannel.Empty
+            servletReader(servletRequest.inputStream, contentLength, idleTimeout).channel
+        } else {
+            ByteReadChannel.Empty
+        }
     }
 
     override val engineReceiveChannel: ByteReadChannel get() = inputStreamChannel
@@ -76,7 +101,6 @@ public class AsyncServletApplicationRequest(
     }
 }
 
-@Suppress("DEPRECATION")
 public open class AsyncServletApplicationResponse(
     call: AsyncServletApplicationCall,
     protected val servletRequest: HttpServletRequest,
@@ -85,10 +109,11 @@ public open class AsyncServletApplicationResponse(
     private val userContext: CoroutineContext,
     private val servletUpgradeImpl: ServletUpgrade,
     override val coroutineContext: CoroutineContext,
+    private val idleTimeout: Duration? = null,
     managedByEngineHeaders: Set<String> = emptySet()
 ) : ServletApplicationResponse(call, servletResponse, managedByEngineHeaders), CoroutineScope {
     override fun createResponseJob(): ReaderJob =
-        servletWriter(servletResponse.outputStream)
+        servletWriter(servletResponse.outputStream, idleTimeout)
 
     public final override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
         try {

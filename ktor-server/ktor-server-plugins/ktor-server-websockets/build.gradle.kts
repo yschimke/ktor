@@ -1,17 +1,27 @@
+/*
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 description = ""
 
-kotlin.sourceSets {
-    jvmAndNixMain {
-        dependencies {
-            api(project(":ktor-shared:ktor-websockets"))
-            api(project(":ktor-shared:ktor-websocket-serialization"))
-        }
-    }
+plugins {
+    id("ktorbuild.project.server-plugin")
+}
 
-    jvmAndNixTest {
-        dependencies {
-            api(project(":ktor-server:ktor-server-plugins:ktor-server-content-negotiation"))
-            api(project(":ktor-client:ktor-client-plugins:ktor-client-websockets"))
+kotlin {
+    sourceSets {
+        commonMain.dependencies {
+            api(projects.ktorWebsockets)
+            api(projects.ktorWebsocketSerialization)
+        }
+
+        commonTest.dependencies {
+            api(projects.ktorServerContentNegotiation)
+            api(projects.ktorClientWebsockets)
+        }
+
+        jvmTest.dependencies {
+            implementation(projects.ktorTestBase)
         }
     }
 }

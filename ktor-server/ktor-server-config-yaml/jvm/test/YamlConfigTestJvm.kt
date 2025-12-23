@@ -4,8 +4,12 @@
 
 package io.ktor.server.config.yaml
 
+import com.charleskorn.kaml.Yaml
+import com.charleskorn.kaml.YamlMap
 import io.ktor.server.config.*
+import kotlinx.serialization.decodeFromString
 import kotlin.test.*
+import kotlin.test.Test
 
 @Suppress("RECEIVER_NULLABILITY_MISMATCH_BASED_ON_JAVA_ANNOTATIONS")
 class YamlConfigTestJvm {
@@ -18,8 +22,16 @@ class YamlConfigTestJvm {
     }
 
     @Test
-    fun testLoadCustomConfig() {
+    fun testLoadCustomConfigWithYamlSuffix() {
         val path = YamlConfigTestJvm::class.java.classLoader.getResource("application-custom.yaml").toURI().path
+        val config = YamlConfig(path)!!
+        assertEquals("2345", config.property("ktor.deployment.port").getString())
+        assertEquals(listOf("c", "d", "e"), config.property("ktor.auth.users").getList())
+    }
+
+    @Test
+    fun testLoadCustomConfigWithYmlSuffix() {
+        val path = YamlConfigTestJvm::class.java.classLoader.getResource("application-custom.yml").toURI().path
         val config = YamlConfig(path)!!
         assertEquals("2345", config.property("ktor.deployment.port").getString())
         assertEquals(listOf("c", "d", "e"), config.property("ktor.auth.users").getList())
@@ -30,6 +42,30 @@ class YamlConfigTestJvm {
         val path = YamlConfigTestJvm::class.java.classLoader.getResource("application-no-env.yaml").toURI().path
         assertFailsWith<ApplicationConfigurationException> {
             YamlConfig(path)
+        }
+    }
+
+    @Test
+    fun testSystemPropertyConfig() {
+        val originalValue = System.getProperty("test.property")
+        try {
+            System.setProperty("test.property", "systemValue")
+
+            val content = """
+            ktor:
+                property: "${'$'}test.property"
+            """.trimIndent()
+            val yaml = Yaml.default.decodeFromString<YamlMap>(content)
+            val config = YamlConfig.from(yaml)
+
+            val value = config.property("ktor.property").getString()
+            assertEquals("systemValue", value)
+        } finally {
+            if (originalValue != null) {
+                System.setProperty("test.property", originalValue)
+            } else {
+                System.clearProperty("test.property")
+            }
         }
     }
 }

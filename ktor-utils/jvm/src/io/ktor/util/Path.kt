@@ -9,11 +9,15 @@ import java.io.*
 /**
  * Append a [relativePath] safely that means that adding any extra `..` path elements will not let
  * access anything out of the reference directory (unless you have symbolic or hard links or multiple mount points)
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.combineSafe)
  */
 public fun File.combineSafe(relativePath: String): File = combineSafe(this, File(relativePath))
 
 /**
  * Remove all redundant `.` and `..` path elements. Leading `..` are also considered redundant.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.normalizeAndRelativize)
  */
 public fun File.normalizeAndRelativize(): File = normalize().notRooted().dropLeadingTopDirs()
 
@@ -66,13 +70,13 @@ internal fun dropLeadingTopDirs(path: String): Int {
         }
 
         val second: Char = path[startIndex + 1]
-        if (second.isPathSeparator()) {
-            startIndex += 2 // skip 2 characters: ./ or .\
+        startIndex += if (second.isPathSeparator()) {
+            2 // skip 2 characters: ./ or .\
         } else if (second == '.') {
             if (startIndex + 2 == path.length) {
-                startIndex += 2 // skip the only 2 characters remaining: ..
+                2 // skip the only 2 characters remaining: ..
             } else if (path[startIndex + 2].isPathSeparator()) {
-                startIndex += 3 // skip 3 characters: ../ or ..\
+                3 // skip 3 characters: ../ or ..\
             } else { // we have a path component starting with two dots that shouldn't be discarded
                 break
             }

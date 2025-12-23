@@ -49,12 +49,12 @@ internal class EndPointReader(
 
                     channel.writeFully(buffer)
                 }
-            } catch (cause: ClosedChannelException) {
-                channel.close()
+            } catch (_: ClosedChannelException) {
+                channel.flushAndClose()
             } catch (cause: Throwable) {
                 channel.close(cause)
             } finally {
-                channel.close()
+                channel.flushAndClose()
                 JettyWebSocketPool.recycle(buffer)
             }
         }
@@ -65,7 +65,7 @@ internal class EndPointReader(
         buffer.flip()
         val count = try {
             endPoint.fill(buffer)
-        } catch (cause: Throwable) {
+        } catch (_: Throwable) {
             handler.resumeWithException(ClosedChannelException())
         }
 
@@ -101,7 +101,6 @@ internal class EndPointReader(
     }
 }
 
-@Suppress("DEPRECATION")
 internal fun CoroutineScope.endPointWriter(
     endPoint: EndPoint,
     pool: ObjectPool<ByteBuffer> = JettyWebSocketPool

@@ -1,21 +1,25 @@
+/*
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 description = ""
 
-kotlin.sourceSets {
-    jvmMain {
-        dependencies {
-            api(project(":ktor-server:ktor-server-core"))
-            api(project(":ktor-server:ktor-server-servlet"))
+plugins {
+    id("ktorbuild.project.library")
+}
+
+kotlin {
+    sourceSets {
+        jvmMain.dependencies {
+            api(projects.ktorServerCore)
+            api(projects.ktorServerServlet)
             api(libs.tomcat.catalina)
             api(libs.tomcat.embed.core)
         }
-    }
-    jvmTest {
-        dependencies {
-            api(project(":ktor-server:ktor-server-test-base"))
-            api(project(":ktor-server:ktor-server-test-suites"))
-            api(project(":ktor-server:ktor-server-core"))
-            api(project(":ktor-server:ktor-server-core", configuration = "testOutput"))
-            api(libs.logback.classic)
+        jvmTest.dependencies {
+            api(projects.ktorServerTestBase)
+            api(projects.ktorServerTestSuites)
+            api(projects.ktorServerCore)
         }
     }
 }

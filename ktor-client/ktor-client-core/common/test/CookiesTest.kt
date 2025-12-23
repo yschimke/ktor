@@ -1,12 +1,12 @@
+/*
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 import io.ktor.client.plugins.cookies.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.test.dispatcher.*
 import kotlin.test.*
-
-/*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
 
 class CookiesTest {
 
@@ -95,5 +95,23 @@ class CookiesTest {
         feature.sendCookiesWith(builder)
 
         assertNull(builder.headers[HttpHeaders.Cookie])
+    }
+
+    @Test
+    fun testCapturedHeaderCookiesStoredAsRawPreserveOriginalHeader() = testSuspend {
+        val feature = HttpCookies(AcceptAllCookiesStorage(), emptyList())
+        val builder = HttpRequestBuilder()
+        val defaultEncodingCookie = Cookie("default", "&%?#=$")
+        val rawEncodingCookie = Cookie("raw", "&%?#=$", encoding = CookieEncoding.RAW)
+        val base64EncodingCookie = Cookie("base64", "&%?#=$", encoding = CookieEncoding.BASE64_ENCODING)
+        val dquotesEncodingCookie = Cookie("dquotes", "&%?#=$", encoding = CookieEncoding.DQUOTES)
+        val cookies = listOf(defaultEncodingCookie, rawEncodingCookie, base64EncodingCookie, dquotesEncodingCookie)
+            .joinToString("; ", transform = ::renderCookieHeader)
+
+        builder.header(HttpHeaders.Cookie, cookies)
+        feature.captureHeaderCookies(builder)
+        feature.sendCookiesWith(builder)
+
+        assertEquals(cookies, builder.headers[HttpHeaders.Cookie])
     }
 }

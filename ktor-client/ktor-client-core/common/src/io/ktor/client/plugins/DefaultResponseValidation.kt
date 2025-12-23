@@ -19,10 +19,11 @@ private val LOGGER = KtorSimpleLogger("io.ktor.client.plugins.DefaultResponseVal
 /**
  * Default response validation.
  * Check the response status code in range (0..299).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.addDefaultResponseValidation)
  */
 public fun HttpClientConfig<*>.addDefaultResponseValidation() {
     HttpResponseValidator {
-        @Suppress("DEPRECATION")
         expectSuccess = this@addDefaultResponseValidation.expectSuccess
 
         validateResponse { response ->
@@ -66,6 +67,9 @@ private const val DEPRECATED_EXCEPTION_CTOR: String = "Please, provide response 
 
 /**
  * Base for default response exceptions.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.ResponseException)
+ *
  * @param [response]: origin response
  */
 public open class ResponseException(
@@ -79,8 +83,9 @@ public open class ResponseException(
 
 /**
  * Unhandled redirect exception.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.RedirectResponseException)
  */
-@Suppress("KDocMissingDocumentation")
 public class RedirectResponseException(response: HttpResponse, cachedResponseText: String) :
     ResponseException(response, cachedResponseText) {
 
@@ -91,8 +96,9 @@ public class RedirectResponseException(response: HttpResponse, cachedResponseTex
 
 /**
  * Server error exception.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.ServerResponseException)
  */
-@Suppress("KDocMissingDocumentation")
 public class ServerResponseException(
     response: HttpResponse,
     cachedResponseText: String
@@ -104,8 +110,9 @@ public class ServerResponseException(
 
 /**
  * Bad client request exception.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.ClientRequestException)
  */
-@Suppress("KDocMissingDocumentation")
 public class ClientRequestException(
     response: HttpResponse,
     cachedResponseText: String

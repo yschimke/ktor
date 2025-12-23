@@ -8,6 +8,8 @@ import io.ktor.util.*
 
 /**
  * Format `Content-Range` header value
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.contentRangeHeaderValue)
  */
 public fun contentRangeHeaderValue(
     range: LongRange?,
@@ -18,6 +20,8 @@ public fun contentRangeHeaderValue(
 
 /**
  * Format `Content-Range` header value
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.contentRangeHeaderValue)
  */
 public fun contentRangeHeaderValue(
     range: LongRange?,
@@ -27,9 +31,9 @@ public fun contentRangeHeaderValue(
     append(unit)
     append(" ")
     if (range != null) {
-        append(range.start)
+        append(range.first)
         append('-')
-        append(range.endInclusive)
+        append(range.last)
     } else {
         append('*')
     }

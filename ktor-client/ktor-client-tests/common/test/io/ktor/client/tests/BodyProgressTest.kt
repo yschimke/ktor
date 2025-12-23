@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 @file:Suppress("DEPRECATION")
@@ -7,29 +7,34 @@
 package io.ktor.client.tests
 
 import io.ktor.client.call.*
-import io.ktor.client.content.*
 import io.ktor.client.engine.mock.*
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.cache.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import io.ktor.client.tests.utils.*
+import io.ktor.client.test.base.*
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.core.*
-import kotlinx.coroutines.*
-import kotlinx.serialization.*
-import kotlin.test.*
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlin.test.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 private val DOUBLE_TEST_ARRAY = ByteArray(16 * 1025) { 1 }
 private val TEST_ARRAY = ByteArray(8 * 1025) { 1 }
 private val TEST_NAME = "123".repeat(5000)
 
 @OptIn(DelicateCoroutinesApi::class)
-class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
+class BodyProgressTest : ClientLoader() {
 
     @Serializable
     data class User(val login: String, val id: Long)
@@ -46,12 +51,11 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
 
         test { client ->
             invokedCount = 0
-            val listener = { _: Long, _: Long? -> invokedCount++; Unit }
 
             val response: HttpResponse = client.post("$TEST_SERVER/content/echo") {
                 contentType(ContentType.Application.Json)
                 setBody(User(TEST_NAME, 1))
-                onUpload(listener)
+                onUpload { _, _ -> invokedCount++ }
             }
             assertEquals("""{"login":"$TEST_NAME","id":1}""", response.body())
             assertTrue(invokedCount >= 2)
@@ -62,7 +66,6 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
     fun testSendWriteChannelContent() = clientTests {
         test { client ->
             invokedCount = 0
-            val listener = { _: Long, _: Long? -> invokedCount++; Unit }
 
             val response: HttpResponse = client.post("$TEST_SERVER/content/echo") {
                 setBody(
@@ -75,7 +78,7 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
                         }
                     }
                 )
-                onUpload(listener)
+                onUpload { _, _ -> invokedCount++ }
             }
             assertContentEquals(DOUBLE_TEST_ARRAY, response.body())
             assertTrue(invokedCount >= 2)
@@ -86,7 +89,6 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
     fun testSendChannel() = clientTests {
         test { client ->
             invokedCount = 0
-            val listener = { _: Long, _: Long? -> invokedCount++; Unit }
 
             val channel = ByteChannel()
             GlobalScope.launch {
@@ -97,7 +99,7 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
 
             val response: HttpResponse = client.post("$TEST_SERVER/content/echo") {
                 setBody(channel)
-                onUpload(listener)
+                onUpload { _, _ -> invokedCount++ }
             }
             assertContentEquals(DOUBLE_TEST_ARRAY, response.body())
             assertTrue(invokedCount > 2)
@@ -108,14 +110,44 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
     fun testSendByteArray() = clientTests {
         test { client ->
             invokedCount = 0
-            val listener = { _: Long, _: Long? -> invokedCount++; Unit }
 
             val response: HttpResponse = client.post("$TEST_SERVER/content/echo") {
                 setBody(DOUBLE_TEST_ARRAY)
-                onUpload(listener)
+                onUpload { _, _ -> invokedCount++ }
             }
             assertContentEquals(DOUBLE_TEST_ARRAY, response.body())
             assertTrue(invokedCount > 2)
+        }
+    }
+
+    @OptIn(InternalAPI::class)
+    @Test
+    fun testRequestBodyRemainReusableWhenObserving() = clientTests(except("web:*"), timeout = 5.seconds) {
+        test { client ->
+            client.plugin(HttpSend).intercept { request ->
+                val call = execute(request)
+
+                if (call.response.status != HttpStatusCode.OK) {
+                    val builder = HttpRequestBuilder()
+                    builder.takeFromWithExecutionContext(request)
+                    builder.header("respond", "true")
+                    execute(builder)
+                } else {
+                    call
+                }
+            }
+
+            val bodySize = 10 * 1024
+            val response: HttpResponse = client.post("$TEST_SERVER/content/pseudo-auth") {
+                setBody(object : OutgoingContent.ReadChannelContent() {
+                    override val contentLength: Long?
+                        get() = bodySize.toLong()
+                    override fun readFrom(): ByteReadChannel = ByteReadChannel(ByteArray(bodySize))
+                })
+                onUpload { _, _ -> }
+            }
+
+            assertEquals(bodySize.toString(), response.bodyAsText())
         }
     }
 
@@ -129,11 +161,10 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
 
         test { client ->
             invokedCount = 0
-            val listener = { _: Long, _: Long? -> invokedCount++; Unit }
 
             client.prepareGet("$TEST_SERVER/json/users-long") {
                 contentType(ContentType.Application.Json)
-                onDownload(listener)
+                onDownload { _, _ -> invokedCount++ }
             }.execute {
                 val result = it.body<List<User>>()
                 val users = buildList { repeat(300) { add(User(id = it.toLong(), login = "TestLogin-$it")) } }
@@ -153,11 +184,10 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
 
         test { client ->
             invokedCount = 0
-            val listener = { _: Long, _: Long? -> invokedCount++; Unit }
 
             client.prepareGet("$TEST_SERVER/json/users-long") {
                 contentType(ContentType.Application.Json)
-                onDownload(listener)
+                onDownload { _, _ -> invokedCount++ }
             }.body<List<User>, Unit> {
                 val users = buildList { repeat(300) { add(User(id = it.toLong(), login = "TestLogin-$it")) } }
                 assertEquals(users, it)
@@ -170,7 +200,6 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
     fun testReceiveChannelWithExecute() = clientTests {
         test { client ->
             invokedCount = 0
-            val listener = { _: Long, _: Long? -> invokedCount++; Unit }
 
             val channel = ByteChannel()
             GlobalScope.launch {
@@ -181,7 +210,7 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
 
             client.preparePost("$TEST_SERVER/content/echo") {
                 setBody(channel)
-                onDownload(listener)
+                onDownload { _, _ -> invokedCount++ }
             }.execute {
                 val result = it.body<ByteReadChannel>().readRemaining().readBytes()
                 assertContentEquals(DOUBLE_TEST_ARRAY, result)
@@ -194,7 +223,6 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
     fun testReceiveChannelWithReceive() = clientTests {
         test { client ->
             invokedCount = 0
-            val listener = { _: Long, _: Long? -> invokedCount++; Unit }
 
             val channel = ByteChannel()
             GlobalScope.launch {
@@ -205,7 +233,7 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
 
             client.preparePost("$TEST_SERVER/content/echo") {
                 setBody(channel)
-                onDownload(listener)
+                onDownload { _, _ -> invokedCount++ }
             }.body<ByteReadChannel, Unit> {
                 val result = it.readRemaining().readBytes()
                 assertContentEquals(DOUBLE_TEST_ARRAY, result)
@@ -218,11 +246,10 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
     fun testReceiveByteArrayWithExecute() = clientTests {
         test { client ->
             invokedCount = 0
-            val listener = { _: Long, _: Long? -> invokedCount++; Unit }
 
             client.preparePost("$TEST_SERVER/content/echo") {
                 setBody(DOUBLE_TEST_ARRAY)
-                onDownload(listener)
+                onDownload { _, _ -> invokedCount++ }
             }.execute {
                 val result = it.body<ByteArray>()
                 assertContentEquals(DOUBLE_TEST_ARRAY, result)
@@ -235,11 +262,10 @@ class BodyProgressTest : ClientLoader(timeoutSeconds = 60) {
     fun testReceiveByteArrayWithReceive() = clientTests {
         test { client ->
             invokedCount = 0
-            val listener = { _: Long, _: Long? -> invokedCount++; Unit }
 
             client.preparePost("$TEST_SERVER/content/echo") {
                 setBody(DOUBLE_TEST_ARRAY)
-                onDownload(listener)
+                onDownload { _, _ -> invokedCount++ }
             }.body<ByteArray, Unit> {
                 assertContentEquals(DOUBLE_TEST_ARRAY, it)
             }

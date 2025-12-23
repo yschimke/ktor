@@ -9,26 +9,38 @@ import kotlin.math.*
 
 /**
  * Possible content range units: bytes and none
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.RangeUnits)
+ *
  * @property unitToken Lower-case unit name
  */
 public enum class RangeUnits(public val unitToken: String) {
     /**
      * Range unit `bytes`
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.RangeUnits.Bytes)
      */
     Bytes("bytes"),
 
     /**
      * Range unit `none`
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.RangeUnits.None)
      */
     None("none")
 }
 
 /**
  * Represents a `Range` header's particular range
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.ContentRange)
  */
 public sealed class ContentRange {
     /**
      * Represents a `Content-Range` bounded from both sides
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.ContentRange.Bounded)
+     *
      * @property from index from which the content should begin
      * @property to the last index the content should end at (inclusive)
      */
@@ -38,6 +50,9 @@ public sealed class ContentRange {
 
     /**
      * Represents a `Content-Range` bounded at the beginning (skip first bytes, show tail)
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.ContentRange.TailFrom)
+     *
      * @property from index from which the content should begin
      */
     public data class TailFrom(val from: Long) : ContentRange() {
@@ -46,6 +61,9 @@ public sealed class ContentRange {
 
     /**
      * Represents a `Content-Range` bounded by tail size
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.ContentRange.Suffix)
+     *
      * @property lastCount number of tail bytes
      */
     public data class Suffix(val lastCount: Long) : ContentRange() {
@@ -55,6 +73,8 @@ public sealed class ContentRange {
 
 /**
  * Parse `Range` header value
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.parseRangesSpecifier)
  */
 public fun parseRangesSpecifier(rangeSpec: String): RangesSpecifier? {
     try {
@@ -92,13 +112,13 @@ internal fun List<ContentRange>.toLongRanges(contentLength: Long) = map {
 
 // O (N^2 + N ln (N) + N)
 internal fun List<LongRange>.mergeRangesKeepOrder(): List<LongRange> {
-    val sortedMerged = sortedBy { it.start }.fold(ArrayList<LongRange>(size)) { acc, range ->
+    val sortedMerged = sortedBy { it.first }.fold(ArrayList<LongRange>(size)) { acc, range ->
         when {
             acc.isEmpty() -> acc.add(range)
-            acc.last().endInclusive < range.start - 1 -> acc.add(range)
+            acc.last().last < range.first - 1 -> acc.add(range)
             else -> {
                 val last = acc.last()
-                acc[acc.lastIndex] = last.start..max(last.endInclusive, range.endInclusive)
+                acc[acc.lastIndex] = last.first..max(last.last, range.last)
             }
         }
         acc

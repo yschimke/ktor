@@ -4,17 +4,23 @@
 
 package io.ktor.client.plugins.sse
 
+import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.utils.io.*
-import kotlin.time.*
+import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration
 
 @InternalAPI
 public class SSEClientContent(
     public val reconnectionTime: Duration,
     public val showCommentEvents: Boolean,
     public val showRetryEvents: Boolean,
-    requestBody: OutgoingContent,
+    public val maxReconnectionAttempts: Int,
+    public val bufferPolicy: SSEBufferPolicy,
+    public val callContext: CoroutineContext,
+    public val initialRequest: HttpRequestBuilder,
+    requestBody: OutgoingContent
 ) : OutgoingContent.ContentWrapper(requestBody) {
 
     override val headers: Headers = HeadersBuilder().apply {
@@ -25,4 +31,17 @@ public class SSEClientContent(
     }.build()
 
     override fun toString(): String = "SSEClientContent"
+
+    override fun copy(delegate: OutgoingContent): SSEClientContent {
+        return SSEClientContent(
+            reconnectionTime,
+            showCommentEvents,
+            showRetryEvents,
+            maxReconnectionAttempts,
+            bufferPolicy,
+            callContext,
+            initialRequest,
+            delegate
+        )
+    }
 }

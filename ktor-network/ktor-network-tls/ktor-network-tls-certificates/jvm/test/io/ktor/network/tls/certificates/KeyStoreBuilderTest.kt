@@ -1,14 +1,17 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.network.tls.certificates
 
 import io.ktor.network.tls.extensions.*
 import java.net.InetAddress
-import java.time.temporal.*
-import javax.security.auth.x500.*
-import kotlin.test.*
+import java.time.temporal.ChronoUnit
+import javax.security.auth.x500.X500Principal
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 class KeyStoreBuilderTest {
 
@@ -17,6 +20,11 @@ class KeyStoreBuilderTest {
     @BeforeTest
     fun fixCurrentTime() {
         fixCurrentTimeTo(nowInTests)
+    }
+
+    @AfterTest
+    fun restoreCurrentTime() {
+        unmockCurrentTime()
     }
 
     @Test
@@ -47,11 +55,11 @@ class KeyStoreBuilderTest {
                 hash = HashAlgorithm.SHA256
                 sign = SignatureAlgorithm.ECDSA
                 password = "keyPass"
-                keySizeInBits = 128
+                keySizeInBits = 256
             }
         }
 
-        assertHasPrivateKey(keyStore, alias = "someKey", password = "keyPass", algorithm = "EC", size = 128)
+        assertHasPrivateKey(keyStore, alias = "someKey", password = "keyPass", algorithm = "EC", size = 256)
         assertHasX509Certificate(keyStore, alias = "someKey", algorithm = "SHA256withECDSA")
     }
 

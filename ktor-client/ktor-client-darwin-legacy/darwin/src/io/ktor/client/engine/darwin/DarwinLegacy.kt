@@ -5,7 +5,6 @@
 package io.ktor.client.engine.darwin
 
 import io.ktor.client.engine.*
-import io.ktor.util.*
 import io.ktor.utils.io.*
 
 @Suppress("DEPRECATION")
@@ -31,15 +30,15 @@ private val initHook = DarwinLegacy
  * ```
  *
  * You can learn more about client engines from [Engines](https://ktor.io/docs/http-client-engines.html).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.DarwinLegacy)
  */
 @OptIn(InternalAPI::class)
-public object DarwinLegacy : HttpClientEngineFactory<DarwinLegacyClientEngineConfig> {
+public data object DarwinLegacy : HttpClientEngineFactory<DarwinLegacyClientEngineConfig> {
     init {
         engines.append(this)
     }
 
     override fun create(block: DarwinLegacyClientEngineConfig.() -> Unit): HttpClientEngine =
         DarwinLegacyClientEngine(DarwinLegacyClientEngineConfig().apply(block))
-
-    override fun toString(): String = "DarwinLegacy"
 }

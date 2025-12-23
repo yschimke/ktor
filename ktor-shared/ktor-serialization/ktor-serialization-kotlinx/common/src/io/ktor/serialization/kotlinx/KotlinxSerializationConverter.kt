@@ -14,11 +14,14 @@ import io.ktor.utils.io.*
 import io.ktor.utils.io.charsets.*
 import io.ktor.utils.io.core.*
 import kotlinx.coroutines.flow.*
+import kotlinx.io.*
 import kotlinx.serialization.*
 import kotlin.jvm.*
 
 /**
  * Creates a converter serializing with the specified string [format]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.kotlinx.KotlinxSerializationConverter)
  */
 @OptIn(ExperimentalSerializationApi::class, InternalSerializationApi::class)
 public class KotlinxSerializationConverter(
@@ -33,6 +36,7 @@ public class KotlinxSerializationConverter(
         }
     }
 
+    @OptIn(InternalAPI::class)
     override suspend fun serialize(
         contentType: ContentType,
         charset: Charset,
@@ -65,7 +69,7 @@ public class KotlinxSerializationConverter(
         try {
             return when (format) {
                 is StringFormat -> format.decodeFromString(serializer, contentPacket.readText(charset))
-                is BinaryFormat -> format.decodeFromByteArray(serializer, contentPacket.readBytes())
+                is BinaryFormat -> format.decodeFromByteArray(serializer, contentPacket.readByteArray())
                 else -> {
                     contentPacket.discard()
                     error("Unsupported format $format")
@@ -103,6 +107,8 @@ public class KotlinxSerializationConverter(
 /**
  * Register kotlinx.serialization converter into [ContentNegotiation] plugin
  * with the specified [contentType] and binary [format] (such as CBOR, ProtoBuf)
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.kotlinx.serialization)
  */
 public fun Configuration.serialization(contentType: ContentType, format: BinaryFormat) {
     register(contentType, KotlinxSerializationConverter(format))
@@ -111,6 +117,8 @@ public fun Configuration.serialization(contentType: ContentType, format: BinaryF
 /**
  * Register kotlinx.serialization converter into [ContentNegotiation] plugin
  * with the specified [contentType] and string [format] (such as Json)
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.kotlinx.serialization)
  */
 public fun Configuration.serialization(contentType: ContentType, format: StringFormat) {
     register(contentType, KotlinxSerializationConverter(format))

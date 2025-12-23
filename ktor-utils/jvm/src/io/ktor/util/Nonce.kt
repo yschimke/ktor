@@ -29,7 +29,7 @@ private val NonceGeneratorCoroutineName = CoroutineName("nonce-generator")
 
 @OptIn(DelicateCoroutinesApi::class)
 private val nonceGeneratorJob = GlobalScope.launch(
-    context = Dispatchers.IO + NonCancellable + NonceGeneratorCoroutineName,
+    context = Dispatchers.Default + NonCancellable + NonceGeneratorCoroutineName,
     start = CoroutineStart.LAZY
 ) {
     val seedChannel = seedChannel
@@ -50,7 +50,7 @@ private val nonceGeneratorJob = GlobalScope.launch(
             weakRandom.nextBytes(weakBytes)
 
             // mix secure and weak
-            for (i in 0 until secureBytes.size) {
+            for (i in secureBytes.indices) {
                 weakBytes[i * INSECURE_NONCE_COUNT_FACTOR] = secureBytes[i]
             }
 

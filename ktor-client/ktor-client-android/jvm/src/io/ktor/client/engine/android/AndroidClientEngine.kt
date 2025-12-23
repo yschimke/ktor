@@ -14,22 +14,35 @@ import io.ktor.http.content.*
 import io.ktor.util.date.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.jvm.javaio.*
-import kotlinx.coroutines.*
-import java.io.*
-import java.net.*
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import java.io.OutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLConnection
 import java.util.*
-import javax.net.ssl.*
-import kotlin.coroutines.*
-
-private val METHODS_WITHOUT_BODY = listOf(HttpMethod.Get, HttpMethod.Head)
+import javax.net.ssl.HttpsURLConnection
+import kotlin.coroutines.CoroutineContext
 
 /**
  * An Android client engine.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.android.AndroidClientEngine)
  */
 @OptIn(InternalAPI::class)
 public class AndroidClientEngine(override val config: AndroidEngineConfig) : HttpClientEngineBase("ktor-android") {
 
     override val supportedCapabilities: Set<HttpClientEngineCapability<*>> = setOf(HttpTimeoutCapability, SSECapability)
+
+    private val urlFactory = if (config.httpEngineDisabled ||
+        !isHttpEngineAvailable() ||
+        config.proxy != null ||
+        config.context == null
+    ) {
+        URLConnectionFactory.StandardURLConnectionFactory(config)
+    } else {
+        AndroidNetHttpEngineFactory(config)
+    }
 
     override suspend fun execute(data: HttpRequestData): HttpResponseData {
         val callContext = callContext()
@@ -41,12 +54,13 @@ public class AndroidClientEngine(override val config: AndroidEngineConfig) : Htt
         val contentLength: Long? = data.headers[HttpHeaders.ContentLength]?.toLong()
             ?: outgoingContent.contentLength
 
-        val connection: HttpURLConnection = getProxyAwareConnection(url).apply {
+        val connection: HttpURLConnection = urlFactory(url).apply {
             connectTimeout = config.connectTimeout
             readTimeout = config.socketTimeout
 
             setupTimeoutAttributes(data)
 
+            // TODO document not active on Android 14
             if (this is HttpsURLConnection) {
                 config.sslManager(this)
             }
@@ -55,13 +69,11 @@ public class AndroidClientEngine(override val config: AndroidEngineConfig) : Htt
             useCaches = false
             instanceFollowRedirects = false
 
-            mergeHeaders(data.headers, outgoingContent) { key: String, value: String ->
-                addRequestProperty(key, value)
-            }
+            data.forEachHeader(::addRequestProperty)
 
             config.requestConfig(this)
 
-            if (data.method in METHODS_WITHOUT_BODY) {
+            if (!data.method.supportsRequestBody) {
                 if (outgoingContent.isEmpty()) {
                     return@apply
                 }
@@ -85,12 +97,12 @@ public class AndroidClientEngine(override val config: AndroidEngineConfig) : Htt
             val statusCode = responseMessage?.let { HttpStatusCode(responseCode, it) }
                 ?: HttpStatusCode.fromValue(responseCode)
 
-            val content: ByteReadChannel = current.content(callContext, data)
+            val content: ByteReadChannel = current.content(responseCode, callContext)
             val headerFields: Map<String, List<String>> = current.headerFields
                 .mapKeys { it.key?.lowercase(Locale.getDefault()) ?: "" }
                 .filter { it.key.isNotBlank() }
 
-            val version: HttpProtocolVersion = HttpProtocolVersion.HTTP_1_1
+            val version: HttpProtocolVersion = urlFactory.protocolFromRequest(connection)
             val responseHeaders = HeadersImpl(headerFields)
 
             val responseBody: Any = data.attributes.getOrNull(ResponseAdapterAttributeKey)
@@ -100,16 +112,9 @@ public class AndroidClientEngine(override val config: AndroidEngineConfig) : Htt
             HttpResponseData(statusCode, requestTime, responseHeaders, version, responseBody, callContext)
         }
     }
-
-    private fun getProxyAwareConnection(urlString: String): HttpURLConnection {
-        val url = URL(urlString)
-        val connection: URLConnection = config.proxy?.let { url.openConnection(it) } ?: url.openConnection()
-        return connection as HttpURLConnection
-    }
 }
 
 @OptIn(DelicateCoroutinesApi::class)
-@Suppress("BlockingMethodInNonBlockingContext", "DEPRECATION")
 internal suspend fun OutgoingContent.writeTo(
     stream: OutputStream,
     callContext: CoroutineContext

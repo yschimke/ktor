@@ -5,6 +5,7 @@
 package io.ktor.client.plugins
 
 import io.ktor.client.*
+import io.ktor.client.engine.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.util.*
@@ -57,6 +58,8 @@ private val LOGGER = KtorSimpleLogger("io.ktor.client.plugins.DefaultRequest")
  * client.get("https://some.url") { HttpHeaders.ContentType = ContentType.Application.Xml }
  *   // <- requests "https://some.url/", ContentType = Application.Xml
  * ```
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.DefaultRequest)
  */
 public class DefaultRequest private constructor(private val block: DefaultRequestBuilder.() -> Unit) {
 
@@ -71,7 +74,23 @@ public class DefaultRequest private constructor(private val block: DefaultReques
                 val originalUrlString = context.url.toString()
                 val defaultRequest = DefaultRequestBuilder().apply {
                     headers.appendAll(this@intercept.context.headers)
+                    val userHeaders = headers.build()
                     plugin.block(this)
+
+                    // KTOR-6946 User's headers should have higher priority
+                    userHeaders.entries().forEach { (key, oldValues) ->
+                        val newValues = headers.getAll(key)
+                        if (newValues == null) {
+                            headers.appendAll(key, oldValues)
+                            return@forEach
+                        }
+
+                        if (newValues == oldValues || key == HttpHeaders.Cookie) return@forEach
+
+                        headers.remove(key)
+                        headers.appendAll(key, oldValues)
+                        headers.appendMissing(key, newValues)
+                    }
                 }
                 val defaultUrl = defaultRequest.url.build()
                 mergeUrls(defaultUrl, context.url)
@@ -141,6 +160,8 @@ public class DefaultRequest private constructor(private val block: DefaultReques
 
     /**
      * Configuration object for [DefaultRequestBuilder] plugin
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.DefaultRequest.DefaultRequestBuilder)
      */
     @KtorDsl
     public class DefaultRequestBuilder internal constructor() : HttpMessageBuilder {
@@ -151,12 +172,16 @@ public class DefaultRequest private constructor(private val block: DefaultReques
 
         /**
          * Executes a [block] that configures the [URLBuilder] associated to this request.
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.DefaultRequest.DefaultRequestBuilder.url)
          */
         public fun url(block: URLBuilder.() -> Unit): Unit = block(url)
 
         /**
          * Sets the [url] using the specified [scheme], [host], [port] and [path].
          * Pass `null` to keep existing value in the [URLBuilder].
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.DefaultRequest.DefaultRequestBuilder.url)
          */
         public fun url(
             scheme: String? = null,
@@ -170,6 +195,8 @@ public class DefaultRequest private constructor(private val block: DefaultReques
 
         /**
          * Sets the [HttpRequestBuilder.url] from [urlString].
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.DefaultRequest.DefaultRequestBuilder.url)
          */
         public fun url(urlString: String) {
             url.takeFrom(urlString)
@@ -177,6 +204,8 @@ public class DefaultRequest private constructor(private val block: DefaultReques
 
         /**
          * Gets the associated URL's host.
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.DefaultRequest.DefaultRequestBuilder.host)
          */
         public var host: String
             get() = url.host
@@ -186,6 +215,8 @@ public class DefaultRequest private constructor(private val block: DefaultReques
 
         /**
          * Gets the associated URL's port.
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.DefaultRequest.DefaultRequestBuilder.port)
          */
         public var port: Int
             get() = url.port
@@ -195,18 +226,50 @@ public class DefaultRequest private constructor(private val block: DefaultReques
 
         /**
          * Sets attributes using [block].
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.DefaultRequest.DefaultRequestBuilder.setAttributes)
          */
         public fun setAttributes(block: Attributes.() -> Unit) {
             attributes.apply(block)
+        }
+
+        public fun <T : Any> setCapability(key: HttpClientEngineCapability<T>, capability: T) {
+            val capabilities = attributes.computeIfAbsent(ENGINE_CAPABILITIES_KEY) { mutableMapOf() }
+            capabilities[key] = capability
+        }
+
+        @OptIn(InternalAPI::class)
+        public fun unixSocket(path: String) {
+            setCapability(UnixSocketCapability, UnixSocketSettings(path))
         }
     }
 }
 
 /**
- * Set default request parameters. See [DefaultRequest]
+ * Set default request parameters and optionally lets replace previous configuration. See [DefaultRequest]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.defaultRequest)
  */
-public fun HttpClientConfig<*>.defaultRequest(block: DefaultRequest.DefaultRequestBuilder.() -> Unit) {
+public fun HttpClientConfig<*>.defaultRequest(
+    block: DefaultRequest.DefaultRequestBuilder.() -> Unit
+): Unit = install(DefaultRequest) {
+    block()
+}
+
+/**
+ * Set default request parameters and optionally replace previous configuration. See [DefaultRequest]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.defaultRequest)
+ */
+public fun HttpClientConfig<*>.defaultRequest(
+    replace: Boolean = false,
+    block: DefaultRequest.DefaultRequestBuilder.() -> Unit
+): Unit = if (!replace) {
     install(DefaultRequest) {
+        block()
+    }
+} else {
+    installOrReplace(DefaultRequest) {
         block()
     }
 }

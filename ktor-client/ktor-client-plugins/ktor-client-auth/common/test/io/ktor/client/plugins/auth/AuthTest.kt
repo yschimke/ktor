@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.plugins.auth
@@ -11,18 +11,18 @@ import io.ktor.client.plugins.*
 import io.ktor.client.plugins.auth.providers.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import io.ktor.client.tests.utils.*
+import io.ktor.client.test.base.*
 import io.ktor.http.*
 import io.ktor.http.auth.*
 import io.ktor.test.dispatcher.*
-import io.ktor.utils.io.errors.*
 import kotlinx.coroutines.*
+import kotlinx.io.IOException
 import kotlin.test.*
 
 class AuthTest : ClientLoader() {
 
     @Test
-    fun testDigestAuthLegacy() = clientTests(listOf("Js", "native")) {
+    fun testDigestAuthLegacy() = clientTests(except("Js", "native:*")) {
         config {
             install(Auth) {
                 digest {
@@ -42,7 +42,7 @@ class AuthTest : ClientLoader() {
     }
 
     @Test
-    fun testDigestAuth() = clientTests(listOf("Js", "native")) {
+    fun testDigestAuth() = clientTests(except("Js", "native:*")) {
         config {
             install(Auth) {
                 digest {
@@ -59,7 +59,7 @@ class AuthTest : ClientLoader() {
     }
 
     @Test
-    fun testDigestAuthPerRealm() = clientTests(listOf("Js", "native")) {
+    fun testDigestAuthPerRealm() = clientTests(except("Js", "native:*")) {
         config {
             install(Auth) {
                 digest {
@@ -83,7 +83,7 @@ class AuthTest : ClientLoader() {
     }
 
     @Test
-    fun testDigestAuthSHA256() = clientTests(listOf("Js", "native")) {
+    fun testDigestAuthSHA256() = clientTests(except("Js", "native:*")) {
         config {
             install(Auth) {
                 digest {
@@ -100,7 +100,7 @@ class AuthTest : ClientLoader() {
 
     @Suppress("DEPRECATION_ERROR")
     @Test
-    fun testBasicAuthLegacy() = clientTests(listOf("Js")) {
+    fun testBasicAuthLegacy() = clientTests(except("Js")) {
         config {
             install(Auth) {
                 basic {
@@ -116,7 +116,7 @@ class AuthTest : ClientLoader() {
     }
 
     @Test
-    fun testBasicAuth() = clientTests(listOf("Js")) {
+    fun testBasicAuth() = clientTests(except("Js")) {
         config {
             install(Auth) {
                 basic {
@@ -201,7 +201,7 @@ class AuthTest : ClientLoader() {
 
     @Suppress("DEPRECATION_ERROR")
     @Test
-    fun testUnauthorizedBasicAuthLegacy() = clientTests(listOf("Js")) {
+    fun testUnauthorizedBasicAuthLegacy() = clientTests(except("Js")) {
         config {
             install(Auth) {
                 basic {
@@ -220,7 +220,7 @@ class AuthTest : ClientLoader() {
     }
 
     @Test
-    fun testUnauthorizedBasicAuth() = clientTests(listOf("Js")) {
+    fun testUnauthorizedBasicAuth() = clientTests(except("Js")) {
         config {
             install(Auth) {
                 basic {
@@ -237,7 +237,7 @@ class AuthTest : ClientLoader() {
     }
 
     @Test
-    fun testBasicAuthMultiple() = clientTests(listOf("Js")) {
+    fun testBasicAuthMultiple() = clientTests(except("Js")) {
         config {
             install(Auth) {
                 basic {
@@ -260,7 +260,7 @@ class AuthTest : ClientLoader() {
     }
 
     @Test
-    fun testBasicAuthMultipleNotSendWithoutRequest() = clientTests(listOf("Js")) {
+    fun testBasicAuthMultipleNotSendWithoutRequest() = clientTests(except("Js")) {
         config {
             install(Auth) {
                 basic {
@@ -283,7 +283,7 @@ class AuthTest : ClientLoader() {
     }
 
     @Test
-    fun testBasicAuthPerRealm() = clientTests(listOf("Js")) {
+    fun testBasicAuthPerRealm() = clientTests(except("Js")) {
         config {
             install(Auth) {
                 basic {
@@ -402,6 +402,27 @@ class AuthTest : ClientLoader() {
         }
     }
 
+    @Test
+    fun testForbiddenBearerAuthWithInvalidAccessAndValidRefreshTokens() = clientTests {
+        config {
+            install(Auth) {
+                reAuthorizeOnResponse { it.status == HttpStatusCode.Forbidden }
+                bearer {
+                    refreshTokens { BearerTokens("valid", "refresh") }
+                    loadTokens { BearerTokens("invalid", "refresh") }
+                }
+            }
+
+            expectSuccess = false
+        }
+
+        test { client ->
+            client.prepareGet("$TEST_SERVER/auth/bearer/test-refresh?status=403").execute {
+                assertEquals(HttpStatusCode.OK, it.status)
+            }
+        }
+    }
+
     // The return of refreshTokenFun is null, cause it should not be called at all, if loadTokensFun returns valid tokens
     @Test
     fun testUnauthorizedBearerAuthWithValidAccessTokenAndInvalidRefreshToken() = clientTests {
@@ -507,8 +528,6 @@ class AuthTest : ClientLoader() {
         lateinit var clientWithAuth: HttpClient
         test { client ->
             clientWithAuth = client.config {
-                developmentMode = true
-
                 install(Auth) {
                     bearer {
                         loadTokens { BearerTokens("first", "first") }
@@ -535,8 +554,6 @@ class AuthTest : ClientLoader() {
         lateinit var clientWithAuth: HttpClient
         test { client ->
             clientWithAuth = client.config {
-                developmentMode = true
-
                 install(Auth) {
                     bearer {
                         loadTokens { BearerTokens("first", "first") }
@@ -642,7 +659,7 @@ class AuthTest : ClientLoader() {
             val first = client.get("$TEST_SERVER/auth/bearer/first").bodyAsText()
             assertEquals("OK", first)
 
-            val error = kotlin.test.assertFailsWith<IOException> {
+            val error = assertFailsWith<IOException> {
                 client.get("$TEST_SERVER/auth/bearer/second")
             }
             assertEquals("Refresh failed", error.message)
@@ -732,7 +749,7 @@ class AuthTest : ClientLoader() {
     }
 
     @Test
-    fun testMultipleChallengesInMultipleHeadersUnauthorized() = clientTests(listOf("Js")) {
+    fun testMultipleChallengesInMultipleHeadersUnauthorized() = clientTests(except("Js")) {
         test { client ->
             val response = client.get("$TEST_SERVER/auth/multiple/headers")
             assertEquals(HttpStatusCode.Unauthorized, response.status)
@@ -746,6 +763,69 @@ class AuthTest : ClientLoader() {
             } ?: run {
                 fail("Expected WWWAuthenticate header")
             }
+        }
+    }
+
+    @Test
+    fun noRequestsMadeAfterFailureRefresh() = clientTests {
+        config {
+            install(Auth) {
+                bearer {
+                    refreshTokens { null }
+                    loadTokens { BearerTokens("invalid", "") }
+                }
+            }
+        }
+
+        test { client ->
+            val requests = mutableListOf<HttpRequestBuilder>()
+            client.plugin(HttpSend).intercept { request ->
+                requests.add(request)
+                execute(request)
+            }
+
+            client.prepareGet("$TEST_SERVER/auth/bearer/test-refresh").execute {
+                assertEquals(HttpStatusCode.Unauthorized, it.status)
+            }
+
+            assertEquals(1, requests.size)
+            assertEquals("Bearer invalid", requests[0].headers[HttpHeaders.Authorization])
+        }
+    }
+
+    @Test
+    fun testBearerAuthWithCircuitBreaker() = testWithEngine(MockEngine) {
+        config {
+            install(Auth) {
+                bearer {
+                    loadTokens { BearerTokens("invalid", null) }
+                }
+            }
+            engine {
+                addHandler { request ->
+                    val authHeader = request.headers[HttpHeaders.Authorization]
+                    if (authHeader == null) {
+                        // no header - this is expected for refresh token requests
+                        respond("OK", HttpStatusCode.OK)
+                    } else {
+                        // header is invalid throw unauthorized
+                        respond("No Auth Header", HttpStatusCode.Unauthorized)
+                    }
+                }
+            }
+        }
+
+        test { client ->
+            // Test without circuit breaker - should add auth header with invalid token
+            val response1 = client.get("/")
+            assertEquals(HttpStatusCode.Unauthorized, response1.status)
+
+            // Test with circuit breaker - should not add auth header
+            val response2 = client.get("/") {
+                // add AuthCircuitBreaker like any refresh token request would have
+                attributes.put(AuthCircuitBreaker, Unit)
+            }
+            assertEquals(HttpStatusCode.OK, response2.status)
         }
     }
 }

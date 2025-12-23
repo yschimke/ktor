@@ -1,10 +1,12 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 package io.ktor.http
 
 import io.ktor.utils.io.charsets.*
 import io.ktor.utils.io.core.*
+import kotlinx.io.*
 
 private val URL_ALPHABET = ((('a'..'z') + ('A'..'Z') + ('0'..'9')).map { it.code.toByte() }).toSet()
 private val URL_ALPHABET_CHARS = ((('a'..'z') + ('A'..'Z') + ('0'..'9'))).toSet()
@@ -44,6 +46,8 @@ private val SPECIAL_SYMBOLS = listOf('-', '.', '_', '~').map { it.code.toByte() 
 /**
  * Encode url part as specified in
  * https://tools.ietf.org/html/rfc3986#section-2
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.encodeURLQueryComponent)
  */
 public fun String.encodeURLQueryComponent(
     encodeFull: Boolean = false,
@@ -62,12 +66,17 @@ public fun String.encodeURLQueryComponent(
 
 /**
  * Encodes URL path segment. It escapes all illegal or ambiguous characters
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.encodeURLPathPart)
  */
 public fun String.encodeURLPathPart(): String = encodeURLPath(encodeSlash = true)
 
 /**
  * Get the URL-encoding of this string, with options to skip / characters or to prevent
  * encoding already-encoded characters (%hh items).
+ *
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.encodeURLPath)
  *
  * @see [RFC-3986](https://datatracker.ietf.org/doc/html/rfc3986#section-2.1)
  * @param encodeSlash / characters will be encoded as %2F; defaults to false
@@ -88,7 +97,8 @@ public fun String.encodeURLPath(
             continue
         }
 
-        if (!encodeEncoded && current == '%' &&
+        if (!encodeEncoded &&
+            current == '%' &&
             index + 2 < this@encodeURLPath.length &&
             this@encodeURLPath[index + 1] in HEX_ALPHABET &&
             this@encodeURLPath[index + 2] in HEX_ALPHABET
@@ -113,11 +123,15 @@ public fun String.encodeURLPath(
 /**
  * Encode [this] in percent encoding specified here:
  * https://tools.ietf.org/html/rfc5849#section-3.6
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.encodeOAuth)
  */
 public fun String.encodeOAuth(): String = encodeURLParameter()
 
 /**
  * Encode [this] as query parameter key.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.encodeURLParameter)
  */
 public fun String.encodeURLParameter(
     spaceToPlus: Boolean = false
@@ -168,6 +182,8 @@ internal fun String.encodeURLParameterValue(): String = encodeURLParameter(space
 
 /**
  * Decode URL query component
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.decodeURLQueryComponent)
  */
 public fun String.decodeURLQueryComponent(
     start: Int = 0,
@@ -179,6 +195,8 @@ public fun String.decodeURLQueryComponent(
 /**
  * Decode percent encoded URL part within the specified range [[start], [end]).
  * This function is not intended to decode urlencoded forms so it doesn't decode plus character to space.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.decodeURLPart)
  */
 public fun String.decodeURLPart(
     start: Int = 0,
@@ -253,7 +271,7 @@ private fun CharSequence.decodeImpl(
 
                 // Decode chars from bytes and put into StringBuilder
                 // Note: Tried using ByteBuffer and using enc.decode() – it's slower
-                sb.append(String(bytes, offset = 0, length = count, charset = charset))
+                sb.append(bytes.decodeToString(0, 0 + count))
             }
             else -> {
                 sb.append(c)
@@ -267,6 +285,8 @@ private fun CharSequence.decodeImpl(
 
 /**
  * URL decoder exception
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.URLDecodeException)
  */
 public class URLDecodeException(message: String) : Exception(message)
 
@@ -291,7 +311,7 @@ private fun hexDigitToChar(digit: Int): Char = when (digit) {
     else -> 'A' + digit - 10
 }
 
-private fun ByteReadPacket.forEach(block: (Byte) -> Unit) {
+private fun Source.forEach(block: (Byte) -> Unit) {
     takeWhile { buffer ->
         while (buffer.canRead()) {
             block(buffer.readByte())

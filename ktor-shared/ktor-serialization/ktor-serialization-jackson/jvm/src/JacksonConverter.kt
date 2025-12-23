@@ -1,6 +1,6 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.serialization.jackson
 
@@ -11,7 +11,6 @@ import com.fasterxml.jackson.module.kotlin.*
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.serialization.*
-import io.ktor.util.*
 import io.ktor.util.reflect.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.charsets.*
@@ -23,6 +22,9 @@ import kotlin.text.*
 
 /**
  * A content converter that uses [Jackson]
+ *
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.jackson.JacksonConverter)
  *
  * @param objectMapper a configured instance of [ObjectMapper]
  * @param streamRequestBody if set to true, will stream request body, without keeping it whole in memory.
@@ -52,23 +54,22 @@ public class JacksonConverter(
                 Thus, we pass an InputStream instead of a Writer to let Jackson do its thing.
                  */
                 if (charset == Charsets.UTF_8) {
-                    // specific behavior for kotlinx.coroutines.flow.Flow
+                    val jGenerator = objectMapper.factory.createGenerator(this, JsonEncoding.UTF8)
+
                     if (typeInfo.type == Flow::class) {
-                        // emit asynchronous values in OutputStream without pretty print
-                        serializeJson((value as Flow<*>), this)
+                        serialize(value as Flow<*>, jGenerator, this)
                     } else {
-                        objectMapper.writeValue(this, value)
+                        objectMapper.writeValue(jGenerator, value)
                     }
                 } else {
                     // For other charsets, we use a Writer
                     val writer = this.writer(charset = charset)
+                    val jGenerator = objectMapper.factory.createGenerator(writer)
 
-                    // specific behavior for kotlinx.coroutines.flow.Flow
                     if (typeInfo.type == Flow::class) {
-                        // emit asynchronous values in Writer without pretty print
-                        serializeJson((value as Flow<*>), writer)
+                        serialize(value as Flow<*>, jGenerator, writer)
                     } else {
-                        objectMapper.writeValue(writer, value)
+                        objectMapper.writeValue(jGenerator, value)
                     }
                 }
             },
@@ -79,8 +80,17 @@ public class JacksonConverter(
     override suspend fun deserialize(charset: Charset, typeInfo: TypeInfo, content: ByteReadChannel): Any? {
         try {
             return withContext(Dispatchers.IO) {
-                val reader = content.toInputStream().reader(charset)
-                objectMapper.readValue(reader, objectMapper.constructType(typeInfo.reifiedType))
+                val type = objectMapper.constructType(typeInfo.reifiedType)
+                val objectReader = objectMapper.readerFor(type)
+
+                // Jackson handles decoding of Unicode charsets automatically, no need to create a reader.
+                // Additionally, a byte-based source is required for binary format (Smile).
+                if (isUnicode(charset)) {
+                    objectReader.readValue(content.toInputStream())
+                } else {
+                    val reader = content.toInputStream().reader(charset)
+                    objectReader.readValue(reader)
+                }
             }
         } catch (cause: Exception) {
             val convertException = JsonConvertException("Illegal json parameter found: ${cause.message}", cause)
@@ -94,42 +104,37 @@ public class JacksonConverter(
     }
 
     private companion object {
-        private const val beginArrayCharCode = '['.code
-        private const val endArrayCharCode = ']'.code
-        private const val objectSeparator = ','.code
+        private val jacksonEncodings = buildSet<String> {
+            JsonEncoding.entries.forEach { add(it.javaName) }
+            add("US-ASCII") // Jackson automatically unescapes Unicode characters
+        }
+
+        private fun isUnicode(charset: Charset): Boolean {
+            return jacksonEncodings.contains(charset.name()) ||
+                charset == Charsets.UTF_16 ||
+                charset == Charsets.UTF_32
+        }
     }
 
-    private val jfactory by lazy { JsonFactory() }
-
-    private suspend fun <T> serializeJson(flow: Flow<T>, outputStream: OutputStream) {
-        // cannot use ObjectMapper write to Stream because it flushes the OutputStream on each write
-        val jGenerator = jfactory.createGenerator(outputStream, JsonEncoding.UTF8)
-        serialize(flow, jGenerator, outputStream) { outputStream.write(it) }
-    }
-
-    private suspend fun <T> serializeJson(flow: Flow<T>, writer: Writer) {
-        // cannot use ObjectMapper write to Stream because it flushes the OutputStream on each write
-        val jGenerator = jfactory.createGenerator(writer)
-        serialize(flow, jGenerator, writer) { writer.write(it) }
-    }
-
+    /**
+     * Cannot use ObjectMapper write to Stream because it flushes the OutputStream on each write
+     */
     @Suppress("BlockingMethodInNonBlockingContext")
     private suspend fun <Stream : Flushable, T> serialize(
         flow: Flow<T>,
         jGenerator: JsonGenerator,
-        stream: Stream,
-        writeByte: Stream.(Int) -> Unit
+        stream: Stream
     ) {
         jGenerator.setup()
-        stream.writeByte(beginArrayCharCode)
-        flow.collectIndexed { index, value ->
-            if (index > 0) {
-                stream.writeByte(objectSeparator)
-            }
+        jGenerator.writeStartArray()
+
+        flow.collect { value ->
             jGenerator.writeObject(value)
             stream.flush()
         }
-        stream.writeByte(endArrayCharCode)
+
+        jGenerator.writeEndArray()
+        jGenerator.flush()
         stream.flush()
     }
 
@@ -143,7 +148,10 @@ public class JacksonConverter(
 /**
  * Registers the `application/json` content type to the [ContentNegotiation] plugin using Jackson.
  *
- * You can learn more from [Content negotiation and serialization](https://ktor.io/docs/serialization.html).
+ * You can learn more from the corresponding [client](https://ktor.io/docs/client-serialization.html#-3bcvpz_158) and [server](https://ktor.io/docs/server-serialization.html#-230zkf_175) documentation.
+ *
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.jackson.jackson)
  *
  * @param contentType the content type to send with request
  * @param streamRequestBody if set to true, will stream request body, without keeping it whole in memory.

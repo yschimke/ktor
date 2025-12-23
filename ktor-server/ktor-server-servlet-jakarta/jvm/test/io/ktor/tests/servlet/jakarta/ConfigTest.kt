@@ -40,6 +40,7 @@ class ConfigTest {
         }
 
         val config = mockk<ServletConfig> {
+            every { getInitParameter("jakarta.servlet.http.legacyDoHead") } returns "false"
             every { getInitParameter("io.ktor.ktor.config") } returns "test.conf"
             every { servletContext } returns context
             every { servletName } returns "ktor-test"
@@ -75,6 +76,7 @@ class ConfigTest {
         }
 
         val config = mockk<ServletConfig> {
+            every { getInitParameter("jakarta.servlet.http.legacyDoHead") } returns "false"
             every { getInitParameter("io.ktor.ktor.config") } returns "custom-config.yaml"
             every { servletContext } returns context
             every { servletName } returns "ktor-test"
@@ -108,7 +110,7 @@ class ConfigTest {
             every { serverPort } returns 80
             every { serverName } returns "server"
             every { remoteHost } returns "localhost"
-            every { attributeNames } returns java.util.Collections.enumeration(emptyList())
+            every { attributeNames } returns Collections.enumeration(emptyList())
         }
     }
 }

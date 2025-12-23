@@ -1,6 +1,6 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.util.pipeline
 
@@ -9,29 +9,41 @@ import io.ktor.util.debug.*
 import kotlinx.atomicfu.*
 import kotlin.coroutines.*
 
-internal typealias PipelineInterceptorFunction<TSubject, TContext> =
+// helper interface for `startInterceptorCoroutineUninterceptedOrReturn`
+internal typealias PipelineInterceptorCoroutine<TSubject, TContext> =
     (PipelineContext<TSubject, TContext>, TSubject, Continuation<Unit>) -> Any?
 
-internal expect fun <TSubject : Any, TContext : Any>
-    PipelineInterceptor<TSubject, TContext>.toFunction(): PipelineInterceptorFunction<TSubject, TContext>
-
-internal expect fun <TSubject : Any, TContext : Any>
-    PipelineInterceptorFunction<TSubject, TContext>.toInterceptor(): PipelineInterceptor<TSubject, TContext>
+// Overall, it does the same as `startCoroutineUninterceptedOrReturn` from stdlib.
+// Stdlib even has `(suspend R.(P) -> T).startCoroutineUninterceptedOrReturn`, but it's internal.
+// If it was public, then this function would be just:
+// `interceptor.startCoroutineUninterceptedOrReturn(context, subject, continuation)`
+internal expect fun <TSubject : Any, TContext : Any> pipelineStartCoroutineUninterceptedOrReturn(
+    interceptor: PipelineInterceptor<TSubject, TContext>,
+    context: PipelineContext<TSubject, TContext>,
+    subject: TSubject,
+    continuation: Continuation<Unit>
+): Any?
 
 /**
  * Represents an execution pipeline for asynchronous extensible computations
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.Pipeline)
  */
-@Suppress("DEPRECATION")
+
 public open class Pipeline<TSubject : Any, TContext : Any>(
     vararg phases: PipelinePhase
 ) {
     /**
      * Provides common place to store pipeline attributes
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.Pipeline.attributes)
      */
     public val attributes: Attributes = Attributes(concurrent = true)
 
     /**
      * Indicated if debug mode is enabled. In debug mode users will get more details in the stacktrace.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.Pipeline.developmentMode)
      */
     public open val developmentMode: Boolean = false
 
@@ -41,6 +53,8 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
 
     /**
      * Phases of this pipeline
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.Pipeline.items)
      */
     public val items: List<PipelinePhase>
         get() = phasesRaw.map {
@@ -48,19 +62,15 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
         }
 
     /**
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.Pipeline.isEmpty)
+     *
      * @return `true` if there are no interceptors installed regardless number of phases
      */
     public val isEmpty: Boolean
         get() = interceptorsQuantity == 0
 
-    private val _interceptors: AtomicRef<List<PipelineInterceptorFunction<TSubject, TContext>>?> =
-        atomic(null)
-
-    private var interceptors: List<PipelineInterceptorFunction<TSubject, TContext>>?
-        get() = _interceptors.value
-        set(value) {
-            _interceptors.value = value
-        }
+    private var interceptors: List<PipelineInterceptor<TSubject, TContext>>? by atomic(null)
 
     private var interceptorsListShared: Boolean = false
 
@@ -75,12 +85,16 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
 
     /**
      * Executes this pipeline in the given [context] and with the given [subject]
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.Pipeline.execute)
      */
     public suspend fun execute(context: TContext, subject: TSubject): TSubject =
         createContext(context, subject, coroutineContext).execute(subject)
 
     /**
      * Adds [phase] to the end of this pipeline
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.Pipeline.addPhase)
      */
     public fun addPhase(phase: PipelinePhase) {
         if (hasPhase(phase)) {
@@ -100,6 +114,8 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
      * pipeline.insertPhaseAfter(a, c)
      * assertEquals(listOf(a, b, c), pipeline.items)
      * ```
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.Pipeline.insertPhaseAfter)
      */
     public fun insertPhaseAfter(reference: PipelinePhase, phase: PipelinePhase) {
         if (hasPhase(phase)) return
@@ -131,6 +147,8 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
      * pipeline.insertPhaseBefore(c, b)
      * assertEquals(listOf(a, b, c), pipeline.items)
      * ```
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.Pipeline.insertPhaseBefore)
      */
     public fun insertPhaseBefore(reference: PipelinePhase, phase: PipelinePhase) {
         if (hasPhase(phase)) return
@@ -145,19 +163,19 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
 
     /**
      * Adds [block] to the [phase] of this pipeline
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.Pipeline.intercept)
      */
     public fun intercept(phase: PipelinePhase, block: PipelineInterceptor<TSubject, TContext>) {
         val phaseContent = findPhase(phase)
             ?: throw InvalidPhaseException("Phase $phase was not registered for this pipeline")
 
-        val suspendBlock = block.toFunction()
-
-        if (tryAddToPhaseFastPath(phase, suspendBlock)) {
+        if (tryAddToPhaseFastPath(phase, block)) {
             interceptorsQuantity++
             return
         }
 
-        phaseContent.addInterceptor(suspendBlock)
+        phaseContent.addInterceptor(block)
         interceptorsQuantity++
         resetInterceptorsList()
 
@@ -166,6 +184,8 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
 
     /**
      * Invoked after an interceptor has been installed
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.Pipeline.afterIntercepted)
      */
     public open fun afterIntercepted() {
     }
@@ -229,6 +249,8 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
 
     /**
      * Merges another pipeline into this pipeline, maintaining relative phases order
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.Pipeline.merge)
      */
     public fun merge(from: Pipeline<TSubject, TContext>) {
         if (fastPathMerge(from)) {
@@ -241,6 +263,8 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
 
     /**
      * Reset current pipeline from other.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.Pipeline.resetFrom)
      */
     public fun resetFrom(from: Pipeline<TSubject, TContext>) {
         phasesRaw.clear()
@@ -249,24 +273,21 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
         fastPathMerge(from)
     }
 
+    // Kept for binary compatibility
     override fun toString(): String {
-        val interceptors = interceptorsForTests()
-            .joinToString("\n") { "    " + it::class.toString() }
-
-        return "${this::class}(0x${hashCode().toString(16)}) [\n$interceptors\n]"
+        return super.toString()
     }
 
-    internal fun phaseInterceptors(phase: PipelinePhase): List<PipelineInterceptorFunction<TSubject, TContext>> =
+    internal fun phaseInterceptors(phase: PipelinePhase): List<PipelineInterceptor<TSubject, TContext>> =
         findPhase(phase)?.sharedInterceptors() ?: emptyList()
 
     /**
      * For tests only
      */
-    internal fun interceptorsForTests(): List<PipelineInterceptorFunction<TSubject, TContext>> {
+    internal fun interceptorsForTests(): List<PipelineInterceptor<TSubject, TContext>> {
         return interceptors ?: cacheInterceptors()
     }
 
-    @Suppress("DEPRECATION")
     private fun createContext(
         context: TContext,
         subject: TSubject,
@@ -318,7 +339,7 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
         return false
     }
 
-    private fun cacheInterceptors(): List<PipelineInterceptorFunction<TSubject, TContext>> {
+    private fun cacheInterceptors(): List<PipelineInterceptor<TSubject, TContext>> {
         val interceptorsQuantity = interceptorsQuantity
         if (interceptorsQuantity == 0) {
             notSharedInterceptorsList(emptyList())
@@ -340,7 +361,7 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
             }
         }
 
-        val destination: MutableList<PipelineInterceptorFunction<TSubject, TContext>> = mutableListOf()
+        val destination: MutableList<PipelineInterceptor<TSubject, TContext>> = mutableListOf()
         for (phaseIndex in 0..phases.lastIndex) {
             @Suppress("UNCHECKED_CAST")
             val phase = phases[phaseIndex] as? PhaseContent<TSubject, TContext> ?: continue
@@ -392,7 +413,7 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
         return true
     }
 
-    private fun sharedInterceptorsList(): List<PipelineInterceptorFunction<TSubject, TContext>> {
+    private fun sharedInterceptorsList(): List<PipelineInterceptor<TSubject, TContext>> {
         if (interceptors == null) {
             cacheInterceptors()
         }
@@ -407,7 +428,7 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
         interceptorsListSharedPhase = null
     }
 
-    private fun notSharedInterceptorsList(list: List<PipelineInterceptorFunction<TSubject, TContext>>) {
+    private fun notSharedInterceptorsList(list: List<PipelineInterceptor<TSubject, TContext>>) {
         interceptors = list
         interceptorsListShared = false
         interceptorsListSharedPhase = null
@@ -427,7 +448,7 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
 
     private fun tryAddToPhaseFastPath(
         phase: PipelinePhase,
-        block: PipelineInterceptorFunction<TSubject, TContext>
+        block: PipelineInterceptor<TSubject, TContext>
     ): Boolean {
         val currentInterceptors = interceptors
         if (phasesRaw.isEmpty() || currentInterceptors == null) {
@@ -476,6 +497,8 @@ public open class Pipeline<TSubject : Any, TContext : Any>(
 
 /**
  * Executes this pipeline
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.execute)
  */
 @Suppress("NOTHING_TO_INLINE")
 public suspend inline fun <TContext : Any> Pipeline<Unit, TContext>.execute(
@@ -490,6 +513,8 @@ public suspend inline fun <TContext : Any> Pipeline<Unit, TContext>.execute(
 
 /**
  * Intercepts an untyped pipeline when the subject is of the given type
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.intercept)
  */
 public inline fun <reified TSubject : Any, TContext : Any> Pipeline<*, TContext>.intercept(
     phase: PipelinePhase,
@@ -506,6 +531,8 @@ public inline fun <reified TSubject : Any, TContext : Any> Pipeline<*, TContext>
 
 /**
  * Represents an interceptor type which is a suspend extension function for a context
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.PipelineInterceptor)
  */
 public typealias PipelineInterceptor<TSubject, TContext> =
     suspend PipelineContext<TSubject, TContext>.(TSubject) -> Unit

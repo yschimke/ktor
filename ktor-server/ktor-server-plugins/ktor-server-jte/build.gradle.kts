@@ -1,21 +1,25 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
-kotlin.sourceSets {
-    val jteVersion = "3.1.9"
-    jvmMain {
-        dependencies {
-            api("gg.jte:jte:$jteVersion")
+plugins {
+    id("ktorbuild.project.server-plugin")
+}
+
+kotlin {
+    // The minimal JDK version required for jte 3.0+
+    jvmToolchain(17)
+
+    sourceSets {
+        jvmMain.dependencies {
+            api(libs.jte)
         }
-    }
-    jvmTest {
-        dependencies {
-            api(project(":ktor-server:ktor-server-plugins:ktor-server-status-pages"))
-            api(project(":ktor-server:ktor-server-plugins:ktor-server-compression"))
-            api(project(":ktor-server:ktor-server-plugins:ktor-server-conditional-headers"))
-            api("gg.jte:jte-kotlin:$jteVersion")
-            implementation(project(":ktor-server:ktor-server-plugins:ktor-server-content-negotiation"))
+        jvmTest.dependencies {
+            api(projects.ktorServerStatusPages)
+            api(projects.ktorServerCompression)
+            api(projects.ktorServerConditionalHeaders)
+            api(libs.jte.kotlin)
+            implementation(projects.ktorServerContentNegotiation)
         }
     }
 }

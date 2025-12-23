@@ -1,35 +1,28 @@
+/*
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
-kotlin.sourceSets {
-    jvmTest {
-        dependencies {
-            api(project(":ktor-server:ktor-server-test-base"))
-            api(project(":ktor-server:ktor-server-test-suites"))
+import org.jetbrains.kotlin.gradle.targets.jvm.tasks.KotlinJvmTest
+
+plugins {
+    id("ktorbuild.project.internal")
+}
+
+kotlin {
+    // The minimal JVM version required for Jetty 12+
+    jvmToolchain(17)
+
+    sourceSets {
+        jvmTest.dependencies {
+            api(projects.ktorServerTestBase)
+            api(projects.ktorServerTestSuites)
             api(libs.jetty.servlet.jakarta)
-            api(project(":ktor-server:ktor-server-core"))
-            api(project(":ktor-server:ktor-server-jetty-jakarta"))
-            api(project(":ktor-server:ktor-server-core", configuration = "testOutput"))
-
-            api(libs.logback.classic)
+            api(projects.ktorServerCore)
+            api(projects.ktorServerJettyJakarta)
         }
     }
 }
 
-val jetty_alpn_boot_version: String? by extra
-dependencies {
-    if (jetty_alpn_boot_version != null) {
-        add("boot", libs.jetty.alpn.boot)
-    }
-}
-
-val jvmTest: org.jetbrains.kotlin.gradle.targets.jvm.tasks.KotlinJvmTest by tasks
-jvmTest.apply {
-    useJUnitPlatform()
-
+tasks.named<KotlinJvmTest>("jvmTest") {
     systemProperty("enable.http2", "true")
-    exclude("**/*StressTest*")
-
-    if (jetty_alpn_boot_version != null && JavaVersion.current() == JavaVersion.VERSION_1_8) {
-        val bootClasspath = configurations.named("boot").get().files
-        jvmArgs(bootClasspath.map { "-Xbootclasspath/p:${it.absolutePath}" }.iterator())
-    }
 }

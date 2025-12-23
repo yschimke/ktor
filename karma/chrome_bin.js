@@ -21,9 +21,13 @@ config.set({
     "client": {
         captureConsole: true,
         "mocha": {
-            timeout: 10000
+            // Disable timeout as we use individual timeouts for tests
+            timeout: 0
         }
     }
 });
 
-process.env.CHROME_BIN = require('puppeteer').executablePath();
+// CHROME_BIN might be already defined, otherwise use puppeteer to get the path
+if (!process.env.CHROME_BIN) {
+    process.env.CHROME_BIN = require('puppeteer').executablePath();
+}

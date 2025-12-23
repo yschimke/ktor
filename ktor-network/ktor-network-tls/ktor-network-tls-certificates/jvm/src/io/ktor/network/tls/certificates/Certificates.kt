@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.network.tls.certificates
@@ -7,21 +7,27 @@ package io.ktor.network.tls.certificates
 import io.ktor.network.tls.*
 import io.ktor.network.tls.extensions.*
 import io.ktor.utils.io.core.*
-import java.io.*
-import java.math.*
-import java.net.*
+import kotlinx.io.Sink
+import kotlinx.io.readByteArray
+import kotlinx.io.writeUByte
+import java.io.File
+import java.math.BigInteger
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.security.*
-import java.security.cert.*
 import java.security.cert.Certificate
-import java.text.*
-import java.time.*
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
+import java.time.Instant
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
-import java.util.*
-import javax.net.ssl.*
+import javax.net.ssl.TrustManager
+import javax.net.ssl.TrustManagerFactory
 import javax.security.auth.x500.X500Principal
-import kotlin.time.*
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
+import kotlin.time.toJavaDuration
+import kotlin.use
 
 internal val DEFAULT_PRINCIPAL = X500Principal("CN=localhost, OU=Kotlin, O=JetBrains, C=RU")
 private val DEFAULT_CA_PRINCIPAL = X500Principal("CN=localhostCA, OU=Kotlin, O=JetBrains, C=RU")
@@ -34,6 +40,8 @@ private val DEFAULT_CA_PRINCIPAL = X500Principal("CN=localhostCA, OU=Kotlin, O=J
  *
  * A generated certificate will have 3 days validity period and 1024-bits key strength.
  * Only localhost and 127.0.0.1 domains are valid with the certificate.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.network.tls.certificates.generateCertificate)
  */
 public fun generateCertificate(
     file: File? = null,
@@ -106,7 +114,7 @@ internal fun generateX509Certificate(
             ipAddresses = ipAddresses,
             keyType = keyType
         )
-    }.readBytes()
+    }.readByteArray()
 
     val cert = CertificateFactory.getInstance("X.509").generateCertificate(certificateBytes.inputStream())
     cert.verify(signerKeyPair.public)
@@ -114,7 +122,9 @@ internal fun generateX509Certificate(
 }
 
 public enum class KeyType {
-    CA, Server, Client
+    CA,
+    Server,
+    Client,
 }
 
 /**
@@ -127,6 +137,8 @@ public enum class KeyType {
  *
  * A generated certificate will have 3 days validity period and 1024-bits key strength.
  * Only localhost and 127.0.0.1 domains are valid with the certificate.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.network.tls.certificates.generateCertificate)
  */
 public fun KeyStore.generateCertificate(
     file: File? = null,
@@ -173,6 +185,8 @@ public fun KeyStore.generateCertificate(
  * while their responding keys are private.
  *
  *  If [file] is set, all certificates are stored in a JKS keystore in [file] with [password].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.network.tls.certificates.trustStore)
  */
 public fun KeyStore.trustStore(
     file: File? = null,
@@ -196,7 +210,7 @@ public val KeyStore.trustManagers: List<TrustManager>
     get() = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
         .apply { init(this@trustManagers) }.trustManagers.toList()
 
-private fun BytePacketBuilder.writeX509Info(
+private fun Sink.writeX509Info(
     algorithm: String,
     issuer: X500Principal,
     subject: X500Principal,
@@ -247,7 +261,7 @@ private fun BytePacketBuilder.writeX509Info(
     }
 }
 
-private fun BytePacketBuilder.extKeyUsage(content: BytePacketBuilder.() -> Unit) {
+private fun Sink.extKeyUsage(content: Sink.() -> Unit) {
     writeDerSequence {
         writeDerObjectIdentifier(OID.ExtKeyUsage)
         writeDerOctetString {
@@ -256,19 +270,19 @@ private fun BytePacketBuilder.extKeyUsage(content: BytePacketBuilder.() -> Unit)
     }
 }
 
-private fun BytePacketBuilder.clientAuth() {
+private fun Sink.clientAuth() {
     writeDerSequence {
         writeDerObjectIdentifier(OID.ClientAuth)
     }
 }
 
-private fun BytePacketBuilder.serverAuth() {
+private fun Sink.serverAuth() {
     writeDerSequence {
         writeDerObjectIdentifier(OID.ServerAuth)
     }
 }
 
-private fun BytePacketBuilder.subjectAlternativeNames(
+private fun Sink.subjectAlternativeNames(
     domains: List<String>,
     ipAddresses: List<InetAddress>
 ) {
@@ -293,7 +307,7 @@ private fun BytePacketBuilder.subjectAlternativeNames(
     }
 }
 
-private fun BytePacketBuilder.caExtension() {
+private fun Sink.caExtension() {
     writeDerSequence {
         writeDerObjectIdentifier(OID.BasicConstraints)
         // is critical extension bit
@@ -307,7 +321,7 @@ private fun BytePacketBuilder.caExtension() {
     }
 }
 
-private fun BytePacketBuilder.writeAlgorithmIdentifier(algorithm: String) {
+private fun Sink.writeAlgorithmIdentifier(algorithm: String) {
     writeDerSequence {
         val oid = OID.fromAlgorithm(algorithm)
         writeDerObjectIdentifier(oid)
@@ -315,18 +329,18 @@ private fun BytePacketBuilder.writeAlgorithmIdentifier(algorithm: String) {
     }
 }
 
-private fun BytePacketBuilder.writeX509Extension(id: Int, builder: BytePacketBuilder.() -> Unit) {
+private fun Sink.writeX509Extension(id: Int, builder: Sink.() -> Unit) {
     writeByte((0x80 or id).toByte())
     val packet = buildPacket { builder() }
     writeDerLength(packet.remaining.toInt())
     writePacket(packet)
 }
 
-private fun BytePacketBuilder.writeX500Principal(dName: X500Principal) {
+private fun Sink.writeX500Principal(dName: X500Principal) {
     writeFully(dName.encoded)
 }
 
-private fun BytePacketBuilder.writeCertificate(
+private fun Sink.writeCertificate(
     issuer: X500Principal,
     subject: X500Principal,
     publicKey: PublicKey,
@@ -344,7 +358,7 @@ private fun BytePacketBuilder.writeCertificate(
         writeX509Info(algorithm, issuer, subject, publicKey, validFrom, validUntil, domains, ipAddresses, keyType)
     }
 
-    val certInfoBytes = certInfo.readBytes()
+    val certInfoBytes = certInfo.readByteArray()
     val signature = Signature.getInstance(algorithm)
     signature.initSign(signerKeyPair.private)
     signature.update(certInfoBytes)
@@ -360,7 +374,7 @@ private fun BytePacketBuilder.writeCertificate(
     }
 }
 
-private fun BytePacketBuilder.writeVersion(v: Int = 2) {
+private fun Sink.writeVersion(v: Int = 2) {
     writeDerType(2, 0, false)
     val encoded = buildPacket {
         writeAsnInt(v)
@@ -369,7 +383,7 @@ private fun BytePacketBuilder.writeVersion(v: Int = 2) {
     writePacket(encoded)
 }
 
-private fun BytePacketBuilder.writeDerOctetString(block: BytePacketBuilder.() -> Unit) {
+private fun Sink.writeDerOctetString(block: Sink.() -> Unit) {
     val sub = buildPacket { block() }
 
     writeDerType(0, 4, true)
@@ -377,7 +391,7 @@ private fun BytePacketBuilder.writeDerOctetString(block: BytePacketBuilder.() ->
     writePacket(sub)
 }
 
-private fun BytePacketBuilder.writeDerBitString(array: ByteArray, unused: Int = 0) {
+private fun Sink.writeDerBitString(array: ByteArray, unused: Int = 0) {
     require(unused in 0..7)
 
     writeDerType(0, 3, true)
@@ -386,21 +400,21 @@ private fun BytePacketBuilder.writeDerBitString(array: ByteArray, unused: Int = 
     writeFully(array)
 }
 
-private fun BytePacketBuilder.writeDerUTCTime(date: Instant) {
+private fun Sink.writeDerUTCTime(date: Instant) {
     writeDerUTF8String(
         DateTimeFormatter.ofPattern("yyMMddHHmmss'Z'").format(date.atZone(ZoneOffset.UTC)),
         0x17
     )
 }
 
-private fun BytePacketBuilder.writeDerGeneralizedTime(date: Instant) {
+private fun Sink.writeDerGeneralizedTime(date: Instant) {
     writeDerUTF8String(
         DateTimeFormatter.ofPattern("yyyyMMddHHmmss'Z'").format(date.atZone(ZoneOffset.UTC)),
         0x18
     )
 }
 
-private fun BytePacketBuilder.writeDerUTF8String(s: String, type: Int = 0x0c) {
+private fun Sink.writeDerUTF8String(s: String, type: Int = 0x0c) {
     val sub = buildPacket {
         writeText(s)
     }
@@ -410,11 +424,11 @@ private fun BytePacketBuilder.writeDerUTF8String(s: String, type: Int = 0x0c) {
     writePacket(sub)
 }
 
-private fun BytePacketBuilder.writeDerNull() {
+private fun Sink.writeDerNull() {
     writeShort(0x0500)
 }
 
-private fun BytePacketBuilder.writeDerSequence(block: BytePacketBuilder.() -> Unit) {
+private fun Sink.writeDerSequence(block: Sink.() -> Unit) {
     val sub = buildPacket { block() }
 
     writeDerType(0, 0x10, false)
@@ -422,11 +436,11 @@ private fun BytePacketBuilder.writeDerSequence(block: BytePacketBuilder.() -> Un
     writePacket(sub)
 }
 
-private fun BytePacketBuilder.writeDerObjectIdentifier(identifier: OID) {
+private fun Sink.writeDerObjectIdentifier(identifier: OID) {
     writeDerObjectIdentifier(identifier.asArray)
 }
 
-private fun BytePacketBuilder.writeDerObjectIdentifier(identifier: IntArray) {
+private fun Sink.writeDerObjectIdentifier(identifier: IntArray) {
     require(identifier.size >= 2)
     require(identifier[0] in 0..2)
     require(identifier[0] == 2 || identifier[1] in 0..39)
@@ -444,7 +458,7 @@ private fun BytePacketBuilder.writeDerObjectIdentifier(identifier: IntArray) {
     writePacket(sub)
 }
 
-private fun BytePacketBuilder.writeAsnInt(value: BigInteger) {
+private fun Sink.writeAsnInt(value: BigInteger) {
     writeDerType(0, 2, true)
 
     val encoded = value.toByteArray()
@@ -452,7 +466,7 @@ private fun BytePacketBuilder.writeAsnInt(value: BigInteger) {
     writeFully(encoded)
 }
 
-private fun BytePacketBuilder.writeAsnInt(value: Int) {
+private fun Sink.writeAsnInt(value: Int) {
     writeDerType(0, 2, true)
 
     val encoded = buildPacket {
@@ -473,7 +487,7 @@ private fun BytePacketBuilder.writeAsnInt(value: Int) {
     writePacket(encoded)
 }
 
-private fun BytePacketBuilder.writeDerLength(length: Int) {
+private fun Sink.writeDerLength(length: Int) {
     require(length >= 0)
 
     when {
@@ -503,7 +517,7 @@ private fun BytePacketBuilder.writeDerLength(length: Int) {
     }
 }
 
-private fun BytePacketBuilder.writeDerType(kind: Int, typeIdentifier: Int, simpleType: Boolean) {
+private fun Sink.writeDerType(kind: Int, typeIdentifier: Int, simpleType: Boolean) {
     require(kind in 0..3)
     require(typeIdentifier >= 0)
 
@@ -541,8 +555,7 @@ private fun Int.derLength(): Int {
  * Length: 1 Byte (0x01)
  * Value: 0b1111 1111 if true or 0b0000 0000 if false
  */
-@OptIn(ExperimentalUnsignedTypes::class)
-private fun BytePacketBuilder.writeDerBoolean(value: Boolean) {
+private fun Sink.writeDerBoolean(value: Boolean) {
     writeDerType(0, 1, true)
     writeDerLength(1)
     writeUByte(value.toUByte())
@@ -554,7 +567,7 @@ private fun Boolean.toUByte(): UByte = if (this) {
     0.toUByte()
 }
 
-private fun BytePacketBuilder.writeDerInt(value: Int) {
+private fun Sink.writeDerInt(value: Int) {
     require(value >= 0)
 
     val byteCount = value.derLength()

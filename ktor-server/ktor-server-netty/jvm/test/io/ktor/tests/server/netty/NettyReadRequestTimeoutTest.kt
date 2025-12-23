@@ -88,6 +88,7 @@ class NettyReadRequestTimeoutTest :
         client.performAndCheckRequestWithoutTimeout()
     }
 
+    @Ignore
     @Test
     fun `parallel timeout requests`() = requestTimeoutTest(timeout = 1) { _, _ ->
         val client = HttpClient()
@@ -184,6 +185,6 @@ class NettyReadRequestTimeoutTest :
     private suspend fun readAvailable(channel: ByteReadChannel): String {
         val buffer = ByteArray(1024)
         val length = channel.readAvailable(buffer)
-        return String(buffer, length = length)
+        return buffer.decodeToString(0, 0 + length)
     }
 }

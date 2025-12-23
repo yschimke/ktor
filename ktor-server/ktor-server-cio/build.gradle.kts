@@ -1,26 +1,25 @@
+/*
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 description = ""
 
-kotlin.sourceSets {
-    jvmAndNixMain {
-        dependencies {
-            api(project(":ktor-server:ktor-server-core"))
-            api(project(":ktor-http:ktor-http-cio"))
-            api(project(":ktor-shared:ktor-websockets"))
-            api(project(":ktor-network"))
+plugins {
+    id("ktorbuild.project.library")
+}
+
+kotlin {
+    sourceSets {
+        commonMain.dependencies {
+            api(projects.ktorServerCore)
+            api(projects.ktorHttpCio)
+            api(projects.ktorWebsockets)
+            api(projects.ktorNetwork)
         }
-    }
-    jvmAndNixTest {
-        dependencies {
-            api(project(":ktor-server:ktor-server-core"))
-            api(project(":ktor-client:ktor-client-cio"))
-            api(project(":ktor-server:ktor-server-test-suites"))
-        }
-    }
-    jvmTest {
-        dependencies {
-            api(project(":ktor-server:ktor-server-test-base"))
-            api(project(":ktor-server:ktor-server-core", configuration = "testOutput"))
-            api(libs.logback.classic)
+        commonTest.dependencies {
+            api(projects.ktorClientCio)
+            api(projects.ktorServerTestSuites)
+            api(projects.ktorServerTestBase)
         }
     }
 }

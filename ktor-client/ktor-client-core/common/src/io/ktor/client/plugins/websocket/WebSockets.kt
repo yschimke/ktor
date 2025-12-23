@@ -1,6 +1,6 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.client.plugins.websocket
 
@@ -23,28 +23,31 @@ internal val LOGGER = KtorSimpleLogger("io.ktor.client.plugins.websocket.WebSock
 
 /**
  * Indicates if a client engine supports WebSockets.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.websocket.WebSocketCapability)
  */
-public object WebSocketCapability : HttpClientEngineCapability<Unit> {
-    override fun toString(): String = "WebSocketCapability"
-}
+public data object WebSocketCapability : HttpClientEngineCapability<Unit>
 
 /**
  * Indicates if a client engine supports extensions for WebSocket plugin.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.websocket.WebSocketExtensionsCapability)
  */
-public object WebSocketExtensionsCapability : HttpClientEngineCapability<Unit> {
-    override fun toString(): String = "WebSocketExtensionsCapability"
-}
+public data object WebSocketExtensionsCapability : HttpClientEngineCapability<Unit>
 
 /**
  * Client WebSocket plugin.
  *
- * @property pingInterval - interval between [FrameType.PING] messages.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.websocket.WebSockets)
+ *
+ * @property pingIntervalMillis - interval between [FrameType.PING] messages.
  * @property maxFrameSize - max size of a single websocket frame.
  * @property extensionsConfig - extensions configuration
  * @property contentConverter - converter for serialization/deserialization
  */
 public class WebSockets internal constructor(
-    public val pingInterval: Long,
+    public val pingIntervalMillis: Long,
     public val maxFrameSize: Long,
     private val extensionsConfig: WebSocketExtensionsConfig,
     public val contentConverter: WebsocketContentConverter? = null
@@ -52,18 +55,23 @@ public class WebSockets internal constructor(
     /**
      * Client WebSocket plugin.
      *
-     * @property pingInterval - interval between [FrameType.PING] messages.
-     * @property maxFrameSize - max size of single websocket frame.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.websocket.WebSockets.WebSockets)
+     *
+     * @property pingIntervalMillis - interval between [FrameType.PING] messages.
+     * @property maxFrameSize - max size of a single websocket frame.
      */
     public constructor(
-        pingInterval: Long = -1L,
+        pingIntervalMillis: Long = PINGER_DISABLED,
         maxFrameSize: Long = Int.MAX_VALUE.toLong()
-    ) : this(pingInterval, maxFrameSize, WebSocketExtensionsConfig())
+    ) : this(pingIntervalMillis, maxFrameSize, WebSocketExtensionsConfig())
 
     /**
      * Client WebSocket plugin.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.websocket.WebSockets.WebSockets)
      */
-    public constructor() : this(-1L, Int.MAX_VALUE.toLong(), WebSocketExtensionsConfig())
+    public constructor() : this(PINGER_DISABLED, Int.MAX_VALUE.toLong(), WebSocketExtensionsConfig())
 
     private fun installExtensions(context: HttpRequestBuilder) {
         val installed = extensionsConfig.build()
@@ -73,7 +81,6 @@ public class WebSockets internal constructor(
         addNegotiatedProtocols(context, protocols)
     }
 
-    @Suppress("UNCHECKED_CAST")
     private fun completeNegotiation(
         call: HttpClientCall
     ): List<WebSocketExtension<*>> {
@@ -89,20 +96,22 @@ public class WebSockets internal constructor(
     private fun addNegotiatedProtocols(context: HttpRequestBuilder, protocols: List<WebSocketExtensionHeader>) {
         if (protocols.isEmpty()) return
 
-        val headerValue = protocols.joinToString(";")
+        val headerValue = protocols.joinToString(",")
         context.header(HttpHeaders.SecWebSocketExtensions, headerValue)
     }
 
     internal fun convertSessionToDefault(session: WebSocketSession): DefaultWebSocketSession {
         if (session is DefaultWebSocketSession) return session
 
-        return DefaultWebSocketSession(session, pingInterval, timeoutMillis = pingInterval * 2).also {
+        return DefaultWebSocketSession(session, pingIntervalMillis, timeoutMillis = pingIntervalMillis * 2).also {
             it.maxFrameSize = this@WebSockets.maxFrameSize
         }
     }
 
     /**
      * [WebSockets] configuration.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.websocket.WebSockets.Config)
      */
     @KtorDsl
     public class Config {
@@ -111,22 +120,30 @@ public class WebSockets internal constructor(
         /**
          * Sets interval of sending ping frames.
          *
-         * Value -1L is for disabled ping.
+         * Use [PINGER_DISABLED] to disable ping.
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.websocket.WebSockets.Config.pingIntervalMillis)
          */
-        public var pingInterval: Long = -1L
+        public var pingIntervalMillis: Long = PINGER_DISABLED
 
         /**
          * Sets maximum frame size in bytes.
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.websocket.WebSockets.Config.maxFrameSize)
          */
         public var maxFrameSize: Long = Int.MAX_VALUE.toLong()
 
         /**
          * A converter for serialization/deserialization
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.websocket.WebSockets.Config.contentConverter)
          */
         public var contentConverter: WebsocketContentConverter? = null
 
         /**
          * Configure WebSocket extensions.
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.websocket.WebSockets.Config.extensions)
          */
         public fun extensions(block: WebSocketExtensionsConfig.() -> Unit) {
             extensionsConfig.apply(block)
@@ -135,6 +152,8 @@ public class WebSockets internal constructor(
 
     /**
      * Add WebSockets support for ktor http client.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.websocket.WebSockets.Plugin)
      */
     public companion object Plugin : HttpClientPlugin<Config, WebSockets> {
         override val key: AttributeKey<WebSockets> = AttributeKey("Websocket")
@@ -142,7 +161,7 @@ public class WebSockets internal constructor(
         override fun prepare(block: Config.() -> Unit): WebSockets {
             val config = Config().apply(block)
             return WebSockets(
-                config.pingInterval,
+                config.pingIntervalMillis,
                 config.maxFrameSize,
                 config.extensionsConfig,
                 config.contentConverter
@@ -155,11 +174,11 @@ public class WebSockets internal constructor(
 
             scope.requestPipeline.intercept(HttpRequestPipeline.Render) {
                 if (!context.url.protocol.isWebsocket()) {
-                    LOGGER.trace("Skipping WebSocket plugin for non-websocket request: ${context.url}")
+                    LOGGER.trace { "Skipping WebSocket plugin for non-websocket request: ${context.url}" }
                     return@intercept
                 }
 
-                LOGGER.trace("Sending WebSocket request ${context.url}")
+                LOGGER.trace { "Sending WebSocket request ${context.url}" }
                 context.setCapability(WebSocketCapability, Unit)
 
                 if (extensionsSupported) {
@@ -175,21 +194,27 @@ public class WebSockets internal constructor(
                 val requestContent = response.request.content
 
                 if (requestContent !is WebSocketContent) {
-                    LOGGER.trace("Skipping non-websocket response from ${context.request.url}: $session")
+                    LOGGER.trace { "Skipping non-websocket response from ${context.request.url}: $requestContent" }
                     return@intercept
                 }
                 if (status != HttpStatusCode.SwitchingProtocols) {
+                    @Suppress("ktlint:standard:max-line-length")
                     throw WebSocketException(
-                        "Handshake exception, expected status code ${HttpStatusCode.SwitchingProtocols.value} but was ${status.value}" // ktlint-disable max-line-length
+                        "Handshake exception, expected status code ${HttpStatusCode.SwitchingProtocols.value} but was ${status.value}"
                     )
                 }
                 if (session !is WebSocketSession) {
                     throw WebSocketException(
-                        "Handshake exception, expected `WebSocketSession` content but was $session"
+                        "Handshake exception, expected `WebSocketSession` content but was ${session::class}"
                     )
                 }
 
-                LOGGER.trace("Receive websocket session from ${context.request.url}: $session")
+                LOGGER.trace { "Receive websocket session from ${context.request.url}: $session" }
+
+                if (plugin.maxFrameSize != Int.MAX_VALUE.toLong()) {
+                    session.maxFrameSize = plugin.maxFrameSize
+                }
+
                 val clientSession: ClientWebSocketSession = when (info.type) {
                     DefaultClientWebSocketSession::class -> {
                         val defaultSession = plugin.convertSessionToDefault(session)
@@ -206,7 +231,9 @@ public class WebSockets internal constructor(
                         }
                     }
 
-                    else -> DelegatingClientWebSocketSession(context, session)
+                    else -> {
+                        DelegatingClientWebSocketSession(context, session)
+                    }
                 }
 
                 proceedWith(HttpResponseContainer(info, clientSession))
@@ -215,7 +242,6 @@ public class WebSockets internal constructor(
     }
 }
 
-@Suppress("KDocMissingDocumentation")
 public class WebSocketException(message: String, cause: Throwable?) : IllegalStateException(message, cause) {
     // required for backwards binary compatibility
     public constructor(message: String) : this(message, cause = null)

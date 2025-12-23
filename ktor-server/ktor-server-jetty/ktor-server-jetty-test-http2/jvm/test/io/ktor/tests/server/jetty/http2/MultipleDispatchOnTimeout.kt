@@ -24,6 +24,8 @@ class MultipleDispatchOnTimeout {
      * We are testing that the servlet container does not trigger an extra error dispatch for calls that timeout from
      * the perspective of the servlet container. The fact that it does so is apparently specified here on this url:
      * https://docs.oracle.com/javaee/6/api/javax/servlet/AsyncContext.html
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.tests.server.jetty.http2.MultipleDispatchOnTimeout.calls with duration longer than default timeout do not trigger a redispatch)
      */
     @Test
     fun `calls with duration longer than default timeout do not trigger a redispatch`() {
@@ -35,14 +37,12 @@ class MultipleDispatchOnTimeout {
 
         val jetty = embeddedServer(
             Jetty,
-            applicationProperties(environment) {
+            serverConfig(environment) {
                 module {
                     intercept(ApplicationCallPipeline.Call) {
                         callCount.incrementAndGet()
-                        val timeout = Math.max(
-                            (call.request as ServletApplicationRequest).servletRequest.asyncContext.timeout,
-                            0
-                        )
+                        val timeout = (call.request as ServletApplicationRequest)
+                            .servletRequest.asyncContext.timeout.coerceAtLeast(0)
                         Thread.sleep(timeout + 1000)
                         call.respondTextWriter {
                             write("A ok!")

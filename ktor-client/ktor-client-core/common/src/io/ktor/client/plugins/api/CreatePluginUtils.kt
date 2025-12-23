@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.plugins.api
@@ -11,6 +11,8 @@ import io.ktor.utils.io.*
 
 /**
  * Client plugins factory.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.api.ClientPlugin)
  */
 public interface ClientPlugin<PluginConfig : Any> : HttpClientPlugin<PluginConfig, ClientPluginInstance<PluginConfig>>
 
@@ -38,6 +40,9 @@ public interface ClientPlugin<PluginConfig : Any> : HttpClientPlugin<PluginConfi
  * }
  * ```
  *
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.api.createClientPlugin)
+ *
  * @param name A name of a plugin that is used to get its instance.
  * @param createConfiguration Defines how the initial [PluginConfigT] of your new plugin can be created.
  * Note that it may be modified later when a user of your plugin calls [HttpClientConfig.install].
@@ -48,20 +53,26 @@ public fun <PluginConfigT : Any> createClientPlugin(
     name: String,
     createConfiguration: () -> PluginConfigT,
     body: ClientPluginBuilder<PluginConfigT>.() -> Unit
-): ClientPlugin<PluginConfigT> =
-    object : ClientPlugin<PluginConfigT> {
-        override val key: AttributeKey<ClientPluginInstance<PluginConfigT>> = AttributeKey(name)
+): ClientPlugin<PluginConfigT> = ClientPluginImpl(name, createConfiguration, body)
 
-        override fun prepare(block: PluginConfigT.() -> Unit): ClientPluginInstance<PluginConfigT> {
-            val config = createConfiguration().apply(block)
-            return ClientPluginInstance(config, name, body)
-        }
+private class ClientPluginImpl<PluginConfigT : Any>(
+    name: String,
+    private val createConfiguration: () -> PluginConfigT,
+    private val body: ClientPluginBuilder<PluginConfigT>.() -> Unit
+) : ClientPlugin<PluginConfigT> {
 
-        @OptIn(InternalAPI::class)
-        override fun install(plugin: ClientPluginInstance<PluginConfigT>, scope: HttpClient) {
-            plugin.install(scope)
-        }
+    override val key: AttributeKey<ClientPluginInstance<PluginConfigT>> = AttributeKey(name)
+
+    override fun prepare(block: PluginConfigT.() -> Unit): ClientPluginInstance<PluginConfigT> {
+        val config = createConfiguration().apply(block)
+        return ClientPluginInstance(key, config, body)
     }
+
+    @OptIn(InternalAPI::class)
+    override fun install(plugin: ClientPluginInstance<PluginConfigT>, scope: HttpClient) {
+        plugin.install(scope)
+    }
+}
 
 /**
  * Creates a [ClientPlugin] with empty config that can be installed into an [HttpClient].
@@ -76,6 +87,9 @@ public fun <PluginConfigT : Any> createClientPlugin(
  *
  * client.install(CustomHeaderPlugin)
  * ```
+ *
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.api.createClientPlugin)
  *
  * @param name A name of a plugin that is used to get its instance.
  * @param body Allows you to define handlers ([onRequest], [onResponse], and so on) that

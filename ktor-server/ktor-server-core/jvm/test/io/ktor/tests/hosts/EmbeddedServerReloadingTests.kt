@@ -1,42 +1,50 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 @file:Suppress("unused", "UNUSED_PARAMETER")
 
 package io.ktor.tests.hosts
 
-import com.typesafe.config.*
+import com.typesafe.config.ConfigFactory
+import io.ktor.client.request.*
 import io.ktor.events.*
-import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.config.*
 import io.ktor.server.engine.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.testing.*
+import io.ktor.tests.hosts.EmbeddedServerReloadingTests.Companion.addLoadedModule
 import io.ktor.util.*
-import kotlinx.coroutines.*
-import org.slf4j.helpers.*
-import kotlin.reflect.*
-import kotlin.reflect.jvm.*
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.runBlocking
+import org.slf4j.helpers.NOPLogger
+import kotlin.reflect.KClass
+import kotlin.reflect.KFunction
+import kotlin.reflect.KFunction0
+import kotlin.reflect.jvm.javaMethod
+import kotlin.reflect.jvm.jvmName
 import kotlin.test.*
 
 class EmbeddedServerReloadingTests {
 
     @Test
-    fun `top level extension function as module function`() {
+    fun `top level extension functions as module function`() {
         val environment = applicationEnvironment {
             config = HoconApplicationConfig(
                 ConfigFactory.parseMap(
                     mapOf(
                         "ktor.deployment.environment" to "test",
-                        "ktor.application.modules" to listOf(Application::topLevelExtensionFunction.fqName)
+                        "ktor.application.modules" to listOf(
+                            Application::topLevelExtensionFunction.fqName,
+                            Application::topLevelSuspendExtensionFunction.fqName,
+                        )
                     )
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -45,6 +53,7 @@ class EmbeddedServerReloadingTests {
         val application = server.application
         assertNotNull(application)
         assertEquals("topLevelExtensionFunction", application.attributes[TestKey])
+        assertEquals("topLevelSuspendExtensionFunction", application.attributes[TestKey2])
         server.stop()
     }
 
@@ -62,7 +71,7 @@ class EmbeddedServerReloadingTests {
             )
         }
 
-        val props = applicationProperties(environment)
+        val props = serverConfig(environment)
         val server = EmbeddedServer(props, DummyEngineFactory)
 
         server.start()
@@ -85,7 +94,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -111,7 +120,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -137,7 +146,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -164,7 +173,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -191,7 +200,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -217,7 +226,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -244,7 +253,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -270,7 +279,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -294,7 +303,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -319,7 +328,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -343,7 +352,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -367,7 +376,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -387,13 +396,15 @@ class EmbeddedServerReloadingTests {
                     mapOf(
                         "ktor.deployment.environment" to "test",
                         "ktor.application.modules" to listOf(
-                            EmbeddedServerReloadingTests::class.jvmName + "Kt.topLevelWithDefaultArg"
+                            Application::defaultArgBoolean.fqName,
+                            Application::defaultArgContainingApplicationWord.fqName,
+                            Application::defaultArgInline.fqName,
                         )
                     )
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -401,7 +412,14 @@ class EmbeddedServerReloadingTests {
         server.start()
         val application = server.application
         assertNotNull(application)
-        assertEquals("topLevelWithDefaultArg", application.attributes[TestKey])
+        assertEquals(
+            setOf(
+                "defaultArgBoolean",
+                "defaultArgContainingApplicationWord",
+                "defaultArgInline",
+            ),
+            application.loadedModules,
+        )
         server.stop()
     }
 
@@ -417,7 +435,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -443,7 +461,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -507,6 +525,15 @@ class EmbeddedServerReloadingTests {
 
     companion object {
         val TestKey = AttributeKey<String>("test-key")
+        val TestKey2 = AttributeKey<String>("test-key2")
+        private val LoadedModulesKey = AttributeKey<MutableSet<String>>("loaded-modules")
+
+        val Application.loadedModules: Set<String>
+            get() = attributes.getOrNull(LoadedModulesKey).orEmpty()
+
+        fun Application.addLoadedModule(name: String) {
+            attributes.computeIfAbsent(LoadedModulesKey) { mutableSetOf() }.add(name)
+        }
 
         private val KFunction<*>.fqName: String
             get() = javaMethod!!.declaringClass.name + "." + name
@@ -542,7 +569,7 @@ class EmbeddedServerReloadingTests {
     @Test
     fun `application is available before environment start`() {
         val env = dummyEnv()
-        val props = applicationProperties(env)
+        val props = serverConfig(env)
         val server = EmbeddedServer(props, DummyEngineFactory)
         val app = server.application
         server.start()
@@ -552,7 +579,7 @@ class EmbeddedServerReloadingTests {
     @Test
     fun `completion handler is invoked when attached before environment start`() {
         val env = dummyEnv()
-        val props = applicationProperties(env)
+        val props = serverConfig(env)
         val server = EmbeddedServer(props, DummyEngineFactory)
         val job = server.application.coroutineContext[Job]!!
 
@@ -571,7 +598,7 @@ class EmbeddedServerReloadingTests {
 
     @Test
     fun `interceptor is invoked when added before environment start`() {
-        val server = EmbeddedServer(applicationProperties(), TestEngine) {}
+        val server = EmbeddedServer(serverConfig(), TestEngine) {}
         val engine = server.engine
         server.application.intercept(ApplicationCallPipeline.Plugins) {
             call.response.header("Custom", "Value")
@@ -585,7 +612,8 @@ class EmbeddedServerReloadingTests {
                 }
             }
 
-            assertEquals("Value", engine.handleRequest(HttpMethod.Get, "/").response.headers["Custom"])
+            val response = runBlocking { engine.client.get("/") }
+            assertEquals("Value", response.headers["Custom"])
         } catch (cause: Throwable) {
             fail("Failed with an exception: ${cause.message}")
         } finally {
@@ -633,6 +661,10 @@ fun Application.topLevelExtensionFunction() {
     attributes.put(EmbeddedServerReloadingTests.TestKey, "topLevelExtensionFunction")
 }
 
+suspend fun Application.topLevelSuspendExtensionFunction() {
+    attributes.put(EmbeddedServerReloadingTests.TestKey2, "topLevelSuspendExtensionFunction")
+}
+
 fun topLevelFunction(app: Application) {
     app.attributes.put(EmbeddedServerReloadingTests.TestKey, "topLevelFunction")
 }
@@ -642,8 +674,19 @@ fun topLevelFunction() {
     error("Shouldn't be invoked")
 }
 
-fun Application.topLevelWithDefaultArg(testing: Boolean = false) {
-    attributes.put(EmbeddedServerReloadingTests.TestKey, "topLevelWithDefaultArg")
+fun Application.defaultArgBoolean(testing: Boolean = false) {
+    addLoadedModule("defaultArgBoolean")
+}
+
+fun Application.defaultArgContainingApplicationWord(configure: Application.() -> Unit = {}) {
+    addLoadedModule("defaultArgContainingApplicationWord")
+}
+
+@JvmInline
+value class InstanceId(val value: String)
+
+fun Application.defaultArgInline(id: InstanceId = InstanceId("default")) {
+    addLoadedModule("defaultArgInline")
 }
 
 @JvmOverloads

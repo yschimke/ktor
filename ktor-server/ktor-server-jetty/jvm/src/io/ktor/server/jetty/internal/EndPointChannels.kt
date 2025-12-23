@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.jetty.internal
@@ -50,11 +50,11 @@ internal class EndPointReader(
                     channel.writeFully(buffer)
                 }
             } catch (cause: ClosedChannelException) {
-                channel.close()
+                channel.flushAndClose()
             } catch (cause: Throwable) {
                 channel.close(cause)
             } finally {
-                channel.close()
+                channel.flushAndClose()
                 JettyWebSocketPool.recycle(buffer)
             }
         }
@@ -101,7 +101,6 @@ internal class EndPointReader(
     }
 }
 
-@Suppress("DEPRECATION")
 internal fun CoroutineScope.endPointWriter(
     endPoint: EndPoint,
     pool: ObjectPool<ByteBuffer> = JettyWebSocketPool

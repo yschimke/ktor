@@ -1,43 +1,31 @@
+/*
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 @file:Suppress("RedundantModalityModifier")
 
 package io.ktor.utils.io.core
 
-import io.ktor.utils.io.core.internal.*
-import io.ktor.utils.io.errors.*
-
-public expect class EOFException(message: String) : IOException
+import kotlinx.io.*
 
 /**
  * For streaming input it should be [Input.endOfInput] instead.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.core.isEmpty)
  */
-@Deprecated("Use endOfInput property instead", ReplaceWith("endOfInput"))
-@Suppress("DEPRECATION")
-public inline val Input.isEmpty: Boolean
-    get() = endOfInput
+@Deprecated("Use exhausted() instead", ReplaceWith("exhausted()"))
+public val Source.isEmpty: Boolean
+    get() = exhausted()
 
 /**
  * For streaming input there is no reliable way to detect it without triggering bytes population from the underlying
  * source. Consider using [Input.endOfInput] or use [ByteReadPacket] instead.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.core.isNotEmpty)
  */
 @Deprecated(
-    "This makes no sense for streaming inputs. Some use-cases are covered by endOfInput property",
-    ReplaceWith("!endOfInput")
+    "This makes no sense for streaming inputs. Some use-cases are covered by exhausted() method",
+    ReplaceWith("!exhausted()")
 )
-@Suppress("DEPRECATION")
-public val Input.isNotEmpty: Boolean
-    get() {
-        if (endOfInput) return false
-        prepareReadFirstHead(1)?.let { found ->
-            completeReadHead(found)
-            return true
-        }
-        return false
-    }
-
-@Suppress("EXTENSION_SHADOWED_BY_MEMBER")
-public inline val ByteReadPacket.isEmpty: Boolean
-    get() = endOfInput
-
-@Suppress("EXTENSION_SHADOWED_BY_MEMBER")
-public inline val ByteReadPacket.isNotEmpty: Boolean
-    get() = !endOfInput
+public val Source.isNotEmpty: Boolean
+    get() = !exhausted()

@@ -7,24 +7,33 @@ package io.ktor.client.engine.okhttp
 import io.ktor.client.plugins.*
 import io.ktor.client.request.*
 import io.ktor.http.*
-import kotlinx.coroutines.*
+import io.ktor.http.Headers
+import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.*
-import java.io.*
-import java.net.*
-import kotlin.coroutines.*
+import java.io.IOException
+import java.net.SocketTimeoutException
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import okhttp3.Headers as OkHttpHeaders
 
+@OptIn(InternalCoroutinesApi::class)
 internal suspend fun OkHttpClient.execute(
     request: Request,
-    requestData: HttpRequestData
+    requestData: HttpRequestData,
+    callContext: CoroutineContext
 ): Response = suspendCancellableCoroutine { continuation ->
     val call = newCall(request)
 
-    call.enqueue(OkHttpCallback(requestData, continuation))
-
-    continuation.invokeOnCancellation {
+    callContext[Job]!!.invokeOnCompletion(true) {
         call.cancel()
     }
+
+    val callback = OkHttpCallback(requestData, continuation)
+    call.enqueue(callback)
 }
 
 private class OkHttpCallback(
@@ -58,7 +67,6 @@ internal fun OkHttpHeaders.fromOkHttp(): Headers = object : Headers {
     override fun isEmpty(): Boolean = this@fromOkHttp.size == 0
 }
 
-@Suppress("DEPRECATION")
 internal fun Protocol.fromOkHttp(): HttpProtocolVersion = when (this) {
     Protocol.HTTP_1_0 -> HttpProtocolVersion.HTTP_1_0
     Protocol.HTTP_1_1 -> HttpProtocolVersion.HTTP_1_1
@@ -66,6 +74,7 @@ internal fun Protocol.fromOkHttp(): HttpProtocolVersion = when (this) {
     Protocol.HTTP_2 -> HttpProtocolVersion.HTTP_2_0
     Protocol.H2_PRIOR_KNOWLEDGE -> HttpProtocolVersion.HTTP_2_0
     Protocol.QUIC -> HttpProtocolVersion.QUIC
+    Protocol.HTTP_3 -> HttpProtocolVersion.HTTP_3_0
 }
 
 private fun mapOkHttpException(

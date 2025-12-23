@@ -5,15 +5,16 @@
 package io.ktor.client.engine.okhttp
 
 import io.ktor.client.plugins.websocket.*
+import io.ktor.http.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.CancellationException
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.*
 import okhttp3.*
-import okio.*
+import okio.ByteString
 import okio.ByteString.Companion.toByteString
-import kotlin.coroutines.*
+import kotlin.coroutines.CoroutineContext
 
 internal class OkHttpWebsocketSession(
     private val engine: OkHttpClient,
@@ -124,18 +125,25 @@ internal class OkHttpWebsocketSession(
         _closeReason.complete(CloseReason(code.toShort(), reason))
         try {
             outgoing.trySendBlocking(Frame.Close(CloseReason(code.toShort(), reason)))
-        } catch (ignore: Throwable) {
+        } catch (_: Throwable) {
         }
         _incoming.close()
     }
 
     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
         super.onFailure(webSocket, t, response)
+        val statusCode = response?.code
 
-        _closeReason.completeExceptionally(t)
-        originResponse.completeExceptionally(t)
-        _incoming.close(t)
-        outgoing.close(t)
+        if (statusCode == HttpStatusCode.Unauthorized.value) {
+            originResponse.complete(response)
+            _incoming.close()
+            outgoing.close()
+        } else {
+            originResponse.completeExceptionally(t)
+            _closeReason.completeExceptionally(t)
+            _incoming.close(t)
+            outgoing.close(t)
+        }
     }
 
     override suspend fun flush() {
@@ -144,7 +152,7 @@ internal class OkHttpWebsocketSession(
     /**
      * Creates a new web socket and starts the session.
      */
-    public fun start() {
+    fun start() {
         self.complete(this)
     }
 
@@ -159,7 +167,6 @@ internal class OkHttpWebsocketSession(
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
-@Suppress("KDocMissingDocumentation")
 public class UnsupportedFrameTypeException(
     private val frame: Frame
 ) : IllegalArgumentException("Unsupported frame type: $frame"), CopyableThrowable<UnsupportedFrameTypeException> {
@@ -169,7 +176,6 @@ public class UnsupportedFrameTypeException(
 }
 
 @OptIn(InternalAPI::class)
-@Suppress("DEPRECATION")
 private fun CloseReason.isReserved() = CloseReason.Codes.byCode(code).let { recognized ->
     recognized == null || recognized == CloseReason.Codes.CLOSED_ABNORMALLY
 }

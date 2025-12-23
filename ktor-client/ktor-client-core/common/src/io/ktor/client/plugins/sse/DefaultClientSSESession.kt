@@ -4,35 +4,160 @@
 
 package io.ktor.client.plugins.sse
 
+import io.ktor.client.network.sockets.SocketTimeoutException
+import io.ktor.client.request.*
+import io.ktor.http.*
 import io.ktor.sse.*
+import io.ktor.util.logging.*
+import io.ktor.util.rootCause
 import io.ktor.utils.io.*
-import kotlinx.coroutines.flow.*
-import kotlin.coroutines.*
+import io.ktor.utils.io.CancellationException
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.onCompletion
+import kotlin.coroutines.CoroutineContext
 
 @OptIn(InternalAPI::class)
+@Deprecated("It should be marked with `@InternalAPI`, please use `ClientSSESession` instead")
 public class DefaultClientSSESession(
     content: SSEClientContent,
     private var input: ByteReadChannel,
-    override val coroutineContext: CoroutineContext,
+    override val coroutineContext: CoroutineContext
 ) : SSESession {
     private var lastEventId: String? = null
     private var reconnectionTimeMillis = content.reconnectionTime.inWholeMilliseconds
     private val showCommentEvents = content.showCommentEvents
     private val showRetryEvents = content.showRetryEvents
+    private val maxReconnectionAttempts = content.maxReconnectionAttempts
+    private var needToReconnect = maxReconnectionAttempts > 0
+    private var bodyBuffer: BodyBuffer = content.bufferPolicy.toBodyBuffer()
 
-    private val _incoming = channelFlow {
-        while (true) {
-            val event = input.parseEvent() ?: break
+    private val initialRequest = content.initialRequest
 
-            if (event.isCommentsEvent() && !showCommentEvents) continue
-            if (event.isRetryEvent() && !showRetryEvents) continue
+    private val clientForReconnection = initialRequest.attributes[SSEClientForReconnectionAttr]
 
-            send(event)
+    override fun bodyBuffer(): ByteArray = bodyBuffer.toByteArray()
+
+    public constructor(
+        content: SSEClientContent,
+        input: ByteReadChannel
+    ) : this(content, input, content.callContext + Job() + CoroutineName("DefaultClientSSESession"))
+
+    private var _incoming = flow {
+        // inner while for parsing events of current input (=connection), and when the current input is closed,
+        // we have an outer while to obtain new input
+        while (this@DefaultClientSSESession.coroutineContext.isActive) {
+            while (this@DefaultClientSSESession.coroutineContext.isActive) {
+                val event = input.tryParseEvent() ?: break
+
+                if (event.isCommentsEvent() && !showCommentEvents) continue
+                if (event.isRetryEvent() && !showRetryEvents) continue
+
+                bodyBuffer.appendEvent(event)
+                emit(event)
+            }
+
+            if (needToReconnect) {
+                doReconnection()
+            } else {
+                close()
+            }
+        }
+    }.catch { cause ->
+        when (cause) {
+            is CancellationException -> {
+                // CancellationException will be handled by onCompletion operator
+            }
+
+            else -> {
+                LOGGER.trace { "Error during SSE session processing: $cause" }
+                close()
+                throw cause
+            }
+        }
+    }.onCompletion { cause ->
+        // Because catch operator only catch throwable occurs in upstream flow, so we use onCompletion operator instead
+        // to handle CancellationException occurs in either upstream flow or downstream flow.
+        if (cause is CancellationException) {
+            close()
+        }
+    }
+
+    init {
+        coroutineContext.job.invokeOnCompletion {
+            close()
+        }
+    }
+
+    private suspend fun doReconnection() {
+        withContext(coroutineContext) {
+            var retries = 1
+            while (retries <= maxReconnectionAttempts) {
+                try {
+                    input.cancel()
+
+                    delay(reconnectionTimeMillis)
+
+                    val reconnectionRequest = getRequestForReconnection()
+                    LOGGER.trace {
+                        "Sending SSE request ${reconnectionRequest.url} (attempt ${retries + 1}/${maxReconnectionAttempts + 1})"
+                    }
+
+                    val reconnectionResponse = clientForReconnection.execute(reconnectionRequest).response
+                    LOGGER.trace { "Receive response for reconnection SSE request to ${reconnectionRequest.url}" }
+                    checkResponse(reconnectionResponse)
+
+                    if (reconnectionResponse.status == HttpStatusCode.NoContent) {
+                        needToReconnect = false
+                    }
+
+                    input = reconnectionResponse.rawContent
+                    return@withContext
+                } catch (cause: Throwable) {
+                    if (retries == maxReconnectionAttempts) {
+                        LOGGER.trace {
+                            "Max retries ($maxReconnectionAttempts) reached for SSE reconnection, closing session"
+                        }
+                        throw cause
+                    }
+                    LOGGER.trace { "SSE reconnection attempt ${retries + 1} failed" }
+                    retries++
+                }
+            }
+        }
+    }
+
+    private fun getRequestForReconnection() = HttpRequestBuilder().takeFrom(initialRequest).apply {
+        attributes.remove(sseRequestAttr)
+        attributes.put(SSEReconnectionRequestAttr, true)
+
+        lastEventId?.let {
+            headers.append(HttpHeaders.LastEventID, it)
         }
     }
 
     override val incoming: Flow<ServerSentEvent>
         get() = _incoming
+
+    private fun close() {
+        coroutineContext.cancel()
+        input.cancel()
+    }
+
+    private suspend fun ByteReadChannel.tryParseEvent(): ServerSentEvent? =
+        try {
+            parseEvent()
+        } catch (cause: ClosedByteChannelException) {
+            val rootCause = cause.rootCause
+            if (rootCause is SocketTimeoutException) {
+                throw rootCause
+            }
+
+            // this is expected when the server disconnects
+            null
+        }
 
     private suspend fun ByteReadChannel.parseEvent(): ServerSentEvent? {
         val data = StringBuilder()
@@ -44,9 +169,9 @@ public class DefaultClientSSESession(
         var wasData = false
         var wasComments = false
 
-        var line: String = readUTF8Line() ?: return null
+        var line: String = readUTF8LineWithSave() ?: return null
         while (line.isBlank()) {
-            line = readUTF8Line() ?: return null
+            line = readUTF8LineWithSave() ?: return null
         }
 
         while (true) {
@@ -95,12 +220,18 @@ public class DefaultClientSSESession(
                     }
                 }
             }
-            line = readUTF8Line() ?: return null
+            line = readUTF8LineWithSave() ?: return null
         }
     }
 
     private fun StringBuilder.appendComment(comment: String) {
         append(comment.removePrefix(COLON).removePrefix(SPACE)).append(END_OF_LINE)
+    }
+
+    private suspend fun ByteReadChannel.readUTF8LineWithSave(): String? {
+        val line = readUTF8Line() ?: return null
+        bodyBuffer.appendLine(line)
+        return line
     }
 
     private fun StringBuilder.toText() = toString().removeSuffix(END_OF_LINE)

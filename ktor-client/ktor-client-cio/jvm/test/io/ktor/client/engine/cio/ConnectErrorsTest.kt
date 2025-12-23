@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.engine.cio
@@ -7,27 +7,29 @@ package io.ktor.client.engine.cio
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.*
+import io.ktor.client.plugins.*
 import io.ktor.client.request.*
-import io.ktor.junit.*
+import io.ktor.client.statement.*
+import io.ktor.http.*
 import io.ktor.network.tls.certificates.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.debug.junit5.*
-import org.junit.jupiter.api.extension.*
-import java.io.*
-import java.net.*
-import java.util.concurrent.*
-import javax.net.ssl.*
-import kotlin.concurrent.*
+import io.ktor.utils.io.*
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.assertThrows
+import java.io.File
+import java.net.ConnectException
+import java.net.ServerSocket
+import java.net.SocketException
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
+import kotlin.concurrent.thread
 import kotlin.test.*
 
-@CoroutinesTimeout(5 * 60 * 1000)
-@ExtendWith(RetrySupport::class)
-@Suppress("KDocMissingDocumentation")
 class ConnectErrorsTest {
 
     private val serverSocket = ServerSocket(0, 1)
@@ -37,8 +39,8 @@ class ConnectErrorsTest {
         serverSocket.close()
     }
 
-    @RetryableTest(3)
-    fun testConnectAfterConnectionErrors(): Unit = runBlocking {
+    @Test
+    fun testConnectAfterConnectionErrors() = runTest {
         val client = HttpClient(CIO) {
             engine {
                 maxConnectionsCount = 1
@@ -54,7 +56,7 @@ class ConnectErrorsTest {
                 try {
                     client.request("http://localhost:${serverSocket.localPort}/")
                     fail("Shouldn't reach here")
-                } catch (_: java.net.ConnectException) {
+                } catch (_: ConnectException) {
                 }
             }
 
@@ -73,16 +75,15 @@ class ConnectErrorsTest {
                     } catch (ignore: SocketException) {
                     }
                 }
-                withTimeout(10000L) {
-                    assertEquals("OK", client.get("http://localhost:${serverSocket.localPort}/").body())
-                }
+
+                assertEquals("OK", client.get("http://localhost:${serverSocket.localPort}/").body())
                 thread.join()
             }
         }
     }
 
-    @RetryableTest(3)
-    fun testResponseWithNoLengthChunkedAndConnectionClosedWithHttp10(): Unit = runBlocking {
+    @Test
+    fun testResponseWithNoLengthChunkedAndConnectionClosedWithHttp10() = runTest {
         val client = HttpClient(CIO)
 
         client.use {
@@ -99,7 +100,8 @@ class ConnectErrorsTest {
                             }
                             client.getInputStream().readBytes()
                         }
-                    } catch (_: Exception) { }
+                    } catch (_: Exception) {
+                    }
                 }
                 assertEquals("OK", client.get("http://localhost:${serverSocket.localPort}/").body())
                 thread.join()
@@ -107,8 +109,8 @@ class ConnectErrorsTest {
         }
     }
 
-    @RetryableTest(3)
-    fun testResponseErrorWithNoLengthChunkedAndConnectionClosedWithHttp11(): Unit = runBlocking {
+    @Test
+    fun testResponseErrorWithNoLengthChunkedAndConnectionClosedWithHttp11() = runTest {
         val client = HttpClient(CIO)
 
         client.use {
@@ -134,8 +136,76 @@ class ConnectErrorsTest {
         }
     }
 
-    @RetryableTest(3)
-    fun testLateServerStart(): Unit = runBlocking {
+    @Test
+    fun testResponseErrorWithInvalidChunkException() = runTest {
+        val client = HttpClient(CIO) {
+            install(HttpRequestRetry) {
+                retryOnException(maxRetries = 3)
+            }
+        }
+        val validResponse = buildString {
+            append("HTTP/1.1 200 OK\r\n")
+            append("Content-Type: text/plain\r\n")
+            append("Transfer-Encoding: chunked\r\n\r\n")
+            append("4\r\nTest\r\n0\r\n\r\n")
+        }
+
+        client.use {
+            serverSocket.close()
+
+            ServerSocket(serverSocket.localPort).use { server ->
+                val thread = thread {
+                    val prematureDisconnect = {
+                        server.accept().use { socket ->
+                            socket.getOutputStream().use { out ->
+                                out.write(validResponse.toByteArray(), 0, validResponse.length - 10)
+                            }
+                        }
+                    }
+                    val respondCorrectly = {
+                        server.accept().use { socket ->
+                            socket.getOutputStream().use { out ->
+                                out.write(validResponse.toByteArray())
+                            }
+                        }
+                    }
+                    prematureDisconnect()
+                    prematureDisconnect()
+                    respondCorrectly()
+                }
+
+                val response = client.get("http://localhost:${serverSocket.localPort}/")
+                assertEquals(HttpStatusCode.OK, response.status)
+                assertEquals("Test", response.bodyAsText())
+                thread.join()
+            }
+        }
+    }
+
+    @Test
+    fun testConnectionClosedBeforeReadingResponseStatusLine() = runTest {
+        val client = HttpClient(CIO)
+
+        client.use {
+            serverSocket.close()
+
+            ServerSocket(serverSocket.localPort).use { server ->
+                val thread = thread {
+                    server.accept().use {
+                        // emulate connection closed before sending status line
+                    }
+                }
+
+                assertThrows<ClosedReadChannelException> {
+                    client.get("http://localhost:${serverSocket.localPort}/")
+                }
+                thread.join()
+            }
+        }
+    }
+
+    @Test
+    fun testLateServerStart() = runTest {
         val keyStoreFile = File("build/temp.jks")
         val keyStore = generateCertificate(keyStoreFile, algorithm = "SHA256withECDSA", keySizeInBits = 256)
 
@@ -161,7 +231,7 @@ class ConnectErrorsTest {
             val serverPort = ServerSocket(0).use { it.localPort }
             val server = embeddedServer(
                 Netty,
-                applicationProperties {
+                serverConfig {
                     module {
                         routing {
                             get {
@@ -179,11 +249,11 @@ class ConnectErrorsTest {
 
             try {
                 client.get { url(scheme = "https", path = "/", port = serverPort) }.body<String>()
-            } catch (_: java.net.ConnectException) {
+            } catch (_: ConnectException) {
             }
 
             try {
-                server.start(wait = false)
+                server.startSuspend(wait = false)
 
                 val message = client.get { url(scheme = "https", path = "/", port = serverPort) }.body<String>()
                 assertEquals("OK", message)

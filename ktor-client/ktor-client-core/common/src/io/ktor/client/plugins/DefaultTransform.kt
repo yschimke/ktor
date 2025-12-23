@@ -5,16 +5,18 @@
 package io.ktor.client.plugins
 
 import io.ktor.client.*
+import io.ktor.client.call.checkContentLength
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import io.ktor.http.cio.*
 import io.ktor.http.content.*
-import io.ktor.util.*
 import io.ktor.util.logging.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.core.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.io.*
 
 private val LOGGER = KtorSimpleLogger("io.ktor.client.plugins.defaultTransformers")
 
@@ -22,6 +24,8 @@ private val LOGGER = KtorSimpleLogger("io.ktor.client.plugins.defaultTransformer
  * Install default transformers.
  * Usually installed by default so there is no need to use it
  * unless you have disabled it via [HttpClientConfig.useDefaultTransformers].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.defaultTransformers)
  */
 @OptIn(InternalAPI::class)
 public fun HttpClient.defaultTransformers() {
@@ -72,14 +76,19 @@ public fun HttpClient.defaultTransformers() {
                 proceedWith(HttpResponseContainer(info, body.readRemaining().readText().toInt()))
             }
 
-            ByteReadPacket::class,
-            @Suppress("DEPRECATION")
+            Source::class,
             Input::class -> {
                 proceedWith(HttpResponseContainer(info, body.readRemaining()))
             }
 
             ByteArray::class -> {
                 val bytes = body.toByteArray()
+                checkContentLength(
+                    contentLength = context.response.contentLength(),
+                    bodySize = bytes.size.toLong(),
+                    method = context.request.method
+                )
+
                 proceedWith(HttpResponseContainer(info, bytes))
             }
 
@@ -88,7 +97,7 @@ public fun HttpClient.defaultTransformers() {
                 // could be canceled immediately, but it doesn't matter
                 // since the copying job is running under the client job
                 val responseJobHolder = Job(response.coroutineContext[Job])
-                val channel: ByteReadChannel = writer(response.coroutineContext) {
+                val channel: ByteReadChannel = writer(this@defaultTransformers.coroutineContext) {
                     try {
                         body.copyTo(channel, limit = Long.MAX_VALUE)
                     } catch (cause: CancellationException) {
@@ -97,8 +106,6 @@ public fun HttpClient.defaultTransformers() {
                     } catch (cause: Throwable) {
                         response.cancel("Receive failed", cause)
                         throw cause
-                    } finally {
-                        response.complete()
                     }
                 }.also { writerJob ->
                     writerJob.invokeOnCompletion {
@@ -112,6 +119,22 @@ public fun HttpClient.defaultTransformers() {
             HttpStatusCode::class -> {
                 body.cancel()
                 proceedWith(HttpResponseContainer(info, response.status))
+            }
+
+            MultiPartData::class -> {
+                val rawContentType = checkNotNull(context.response.headers[HttpHeaders.ContentType]) {
+                    "No content type provided for multipart"
+                }
+                val contentType = ContentType.parse(rawContentType)
+                check(contentType.match(ContentType.MultiPart.FormData)) {
+                    "Expected multipart/form-data, got $contentType"
+                }
+
+                val contentLength = context.response.headers[HttpHeaders.ContentLength]?.toLong()
+                val body = CIOMultipartDataBase(coroutineContext, body, rawContentType, contentLength)
+                val parsedResponse = HttpResponseContainer(info, body)
+
+                proceedWith(parsedResponse)
             }
 
             else -> null

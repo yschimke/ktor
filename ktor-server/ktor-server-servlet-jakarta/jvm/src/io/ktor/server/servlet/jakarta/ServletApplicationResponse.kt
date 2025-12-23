@@ -17,6 +17,8 @@ public abstract class ServletApplicationResponse(
     protected val servletResponse: HttpServletResponse,
     private val managedByEngineHeaders: Set<String>
 ) : BaseApplicationResponse(call) {
+    private val headersBuilder = HeadersBuilder()
+
     override fun setStatus(statusCode: HttpStatusCode) {
         servletResponse.status = statusCode.value
     }
@@ -26,13 +28,13 @@ public abstract class ServletApplicationResponse(
 
         override fun engineAppendHeader(name: String, value: String) {
             servletResponse.addHeader(name, value)
+            headersBuilder.append(name, value)
         }
 
-        override fun getEngineHeaderNames(): List<String> = servletResponse.headerNames.toList()
-        override fun getEngineHeaderValues(name: String): List<String> = servletResponse.getHeaders(name).toList()
+        override fun getEngineHeaderNames(): List<String> = headersBuilder.names().toList()
+        override fun getEngineHeaderValues(name: String): List<String> = headersBuilder.getAll(name).orEmpty()
     }
 
-    @Suppress("DEPRECATION")
     protected abstract fun createResponseJob(): ReaderJob
 
     @Volatile
@@ -55,7 +57,10 @@ public abstract class ServletApplicationResponse(
 
             if (responseJob.isInitialized()) {
                 responseJob.value.apply {
-                    channel.close()
+
+                    runCatching {
+                        channel.flushAndClose()
+                    }
                     join()
                 }
                 return@intercept

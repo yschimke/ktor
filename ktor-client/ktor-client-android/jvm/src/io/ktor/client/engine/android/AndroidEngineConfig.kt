@@ -4,18 +4,23 @@
 
 package io.ktor.client.engine.android
 
+import android.net.http.*
 import io.ktor.client.engine.*
 import java.net.*
 import javax.net.ssl.*
 
 /**
  * A configuration for the [Android] client engine.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.android.AndroidEngineConfig)
  */
 public class AndroidEngineConfig : HttpClientEngineConfig() {
     /**
      * Specifies a time period (in milliseconds) in which a client should establish a connection with a server.
      *
      * Set this value to `0` to use an infinite timeout.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.android.AndroidEngineConfig.connectTimeout)
      */
     public var connectTimeout: Int = 100_000
 
@@ -23,16 +28,44 @@ public class AndroidEngineConfig : HttpClientEngineConfig() {
      * Specifies a maximum time (in milliseconds) of inactivity between two data packets when exchanging data with a server.
      *
      * Set this value to `0` to use an infinite timeout.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.android.AndroidEngineConfig.socketTimeout)
      */
     public var socketTimeout: Int = 100_000
 
     /**
      * Allows you to configure [HTTPS](https://ktor.io/docs/client-ssl.html) settings for this engine.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.android.AndroidEngineConfig.sslManager)
      */
     public var sslManager: (HttpsURLConnection) -> Unit = {}
 
     /**
      * Allows you to set engine-specific request configuration.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.android.AndroidEngineConfig.requestConfig)
      */
     public var requestConfig: HttpURLConnection.() -> Unit = {}
+
+    /**
+     * Android 14+ HttpEngine customization hook.
+     *
+     * Applied only when the Android HttpEngine-backed URLConnection path is active
+     * (i.e., when [context] is non-null and the platform reports availability; see internal checks).
+     * Use this to enable features such as Brotli, QUIC, DNS options, and connection migration.
+     * Ignored on the legacy `HttpURLConnection` path.
+     */
+    public var httpEngineConfig: HttpEngine.Builder.() -> Unit = {}
+
+    internal var httpEngineDisabled = false
+
+    /**
+     * Android Context required to initialize the Android HttpEngine path (API 34 or S Extensions ≥ 7).
+     * If this is `null`, or when a proxy is configured, the engine falls back to the legacy
+     * `HttpURLConnection` path.
+     */
+    public var context: android.content.Context? = null
+        set(value) {
+            field = value
+        }
 }

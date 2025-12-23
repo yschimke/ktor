@@ -1,14 +1,14 @@
 /*
- * Copyright 2014-2012 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.tests.jte
 
-import gg.jte.*
+import gg.jte.CodeResolver
+import gg.jte.TemplateEngine
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
-import io.ktor.http.ContentType
 import io.ktor.http.content.*
 import io.ktor.serialization.*
 import io.ktor.server.application.*
@@ -20,11 +20,10 @@ import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.testing.*
-import io.ktor.util.*
 import io.ktor.util.reflect.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.charsets.*
-import java.util.zip.*
+import java.util.zip.GZIPInputStream
 import kotlin.test.*
 import kotlin.text.Charsets
 

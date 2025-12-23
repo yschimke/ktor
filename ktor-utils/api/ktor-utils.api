@@ -1,6 +1,10 @@
 public final class io/ktor/util/AttributeKey {
-	public synthetic fun <init> (Ljava/lang/String;)V
-	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Lio/ktor/util/reflect/TypeInfo;)V
+	public synthetic fun <init> (Ljava/lang/String;Lio/ktor/util/reflect/TypeInfo;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Lio/ktor/util/reflect/TypeInfo;)Lio/ktor/util/AttributeKey;
+	public static synthetic fun copy$default (Lio/ktor/util/AttributeKey;Ljava/lang/String;Lio/ktor/util/reflect/TypeInfo;ILjava/lang/Object;)Lio/ktor/util/AttributeKey;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getName ()Ljava/lang/String;
 	public fun hashCode ()I
@@ -10,17 +14,19 @@ public final class io/ktor/util/AttributeKey {
 public abstract interface class io/ktor/util/Attributes {
 	public abstract fun computeIfAbsent (Lio/ktor/util/AttributeKey;Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
 	public abstract fun contains (Lio/ktor/util/AttributeKey;)Z
-	public abstract fun get (Lio/ktor/util/AttributeKey;)Ljava/lang/Object;
+	public fun get (Lio/ktor/util/AttributeKey;)Ljava/lang/Object;
 	public abstract fun getAllKeys ()Ljava/util/List;
 	public abstract fun getOrNull (Lio/ktor/util/AttributeKey;)Ljava/lang/Object;
 	public abstract fun put (Lio/ktor/util/AttributeKey;Ljava/lang/Object;)V
 	public abstract fun remove (Lio/ktor/util/AttributeKey;)V
-	public abstract fun take (Lio/ktor/util/AttributeKey;)Ljava/lang/Object;
-	public abstract fun takeOrNull (Lio/ktor/util/AttributeKey;)Ljava/lang/Object;
+	public fun set (Lio/ktor/util/AttributeKey;Ljava/lang/Object;)V
+	public fun take (Lio/ktor/util/AttributeKey;)Ljava/lang/Object;
+	public fun takeOrNull (Lio/ktor/util/AttributeKey;)Ljava/lang/Object;
 }
 
 public final class io/ktor/util/Attributes$DefaultImpls {
 	public static fun get (Lio/ktor/util/Attributes;Lio/ktor/util/AttributeKey;)Ljava/lang/Object;
+	public static fun set (Lio/ktor/util/Attributes;Lio/ktor/util/AttributeKey;Ljava/lang/Object;)V
 	public static fun take (Lio/ktor/util/Attributes;Lio/ktor/util/AttributeKey;)Ljava/lang/Object;
 	public static fun takeOrNull (Lio/ktor/util/Attributes;Lio/ktor/util/AttributeKey;)Ljava/lang/Object;
 }
@@ -35,23 +41,22 @@ public final class io/ktor/util/AttributesKt {
 }
 
 public final class io/ktor/util/Base64Kt {
-	public static final fun decodeBase64Bytes (Lio/ktor/utils/io/core/ByteReadPacket;)Lio/ktor/utils/io/core/Input;
 	public static final fun decodeBase64Bytes (Ljava/lang/String;)[B
+	public static final fun decodeBase64Bytes (Lkotlinx/io/Source;)Lkotlinx/io/Source;
 	public static final fun decodeBase64String (Ljava/lang/String;)Ljava/lang/String;
-	public static final fun encodeBase64 (Lio/ktor/utils/io/core/ByteReadPacket;)Ljava/lang/String;
 	public static final fun encodeBase64 (Ljava/lang/String;)Ljava/lang/String;
+	public static final fun encodeBase64 (Lkotlinx/io/Source;)Ljava/lang/String;
 	public static final fun encodeBase64 ([B)Ljava/lang/String;
 }
 
 public final class io/ktor/util/BufferViewJvmKt {
-	public static final fun read (Ljava/nio/channels/ReadableByteChannel;Lio/ktor/utils/io/core/internal/ChunkBuffer;)I
-	public static final fun write (Ljava/nio/channels/WritableByteChannel;Lio/ktor/utils/io/core/internal/ChunkBuffer;)I
+	public static final fun read (Ljava/nio/channels/ReadableByteChannel;Lkotlinx/io/Buffer;)I
+	public static final fun write (Ljava/nio/channels/WritableByteChannel;Lkotlinx/io/Buffer;)I
 }
 
 public final class io/ktor/util/ByteChannelsKt {
 	public static final fun copyToBoth (Lio/ktor/utils/io/ByteReadChannel;Lio/ktor/utils/io/ByteWriteChannel;Lio/ktor/utils/io/ByteWriteChannel;)V
 	public static final fun split (Lio/ktor/utils/io/ByteReadChannel;Lkotlinx/coroutines/CoroutineScope;)Lkotlin/Pair;
-	public static final fun toByteArray (Lio/ktor/utils/io/ByteReadChannel;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class io/ktor/util/BytesKt {
@@ -125,7 +130,7 @@ public final class io/ktor/util/CollectionsKt {
 
 public abstract interface class io/ktor/util/ContentEncoder : io/ktor/util/Encoder {
 	public abstract fun getName ()Ljava/lang/String;
-	public abstract fun predictCompressedLength (J)Ljava/lang/Long;
+	public fun predictCompressedLength (J)Ljava/lang/Long;
 }
 
 public final class io/ktor/util/ContentEncoder$DefaultImpls {
@@ -176,8 +181,11 @@ public abstract interface class io/ktor/util/Digest {
 
 public abstract interface class io/ktor/util/Encoder {
 	public abstract fun decode (Lio/ktor/utils/io/ByteReadChannel;Lkotlin/coroutines/CoroutineContext;)Lio/ktor/utils/io/ByteReadChannel;
+	public static synthetic fun decode$default (Lio/ktor/util/Encoder;Lio/ktor/utils/io/ByteReadChannel;Lkotlin/coroutines/CoroutineContext;ILjava/lang/Object;)Lio/ktor/utils/io/ByteReadChannel;
 	public abstract fun encode (Lio/ktor/utils/io/ByteReadChannel;Lkotlin/coroutines/CoroutineContext;)Lio/ktor/utils/io/ByteReadChannel;
 	public abstract fun encode (Lio/ktor/utils/io/ByteWriteChannel;Lkotlin/coroutines/CoroutineContext;)Lio/ktor/utils/io/ByteWriteChannel;
+	public static synthetic fun encode$default (Lio/ktor/util/Encoder;Lio/ktor/utils/io/ByteReadChannel;Lkotlin/coroutines/CoroutineContext;ILjava/lang/Object;)Lio/ktor/utils/io/ByteReadChannel;
+	public static synthetic fun encode$default (Lio/ktor/util/Encoder;Lio/ktor/utils/io/ByteWriteChannel;Lkotlin/coroutines/CoroutineContext;ILjava/lang/Object;)Lio/ktor/utils/io/ByteWriteChannel;
 }
 
 public final class io/ktor/util/Encoder$DefaultImpls {
@@ -228,7 +236,7 @@ public final class io/ktor/util/IdentityEncoder : io/ktor/util/ContentEncoder, i
 }
 
 public final class io/ktor/util/InputJvmKt {
-	public static final fun asStream (Lio/ktor/utils/io/core/Input;)Ljava/io/InputStream;
+	public static final fun asStream (Lkotlinx/io/Source;)Ljava/io/InputStream;
 }
 
 public final class io/ktor/util/NIOKt {
@@ -259,24 +267,63 @@ public final class io/ktor/util/PathKt {
 	public static final fun normalizeAndRelativize (Ljava/io/File;)Ljava/io/File;
 }
 
-public final class io/ktor/util/Platform : java/lang/Enum {
-	public static final field Browser Lio/ktor/util/Platform;
-	public static final field Jvm Lio/ktor/util/Platform;
-	public static final field Native Lio/ktor/util/Platform;
-	public static final field Node Lio/ktor/util/Platform;
+public abstract class io/ktor/util/Platform {
+}
+
+public final class io/ktor/util/Platform$Js : io/ktor/util/Platform {
+	public fun <init> (Lio/ktor/util/Platform$JsPlatform;)V
+	public final fun component1 ()Lio/ktor/util/Platform$JsPlatform;
+	public final fun copy (Lio/ktor/util/Platform$JsPlatform;)Lio/ktor/util/Platform$Js;
+	public static synthetic fun copy$default (Lio/ktor/util/Platform$Js;Lio/ktor/util/Platform$JsPlatform;ILjava/lang/Object;)Lio/ktor/util/Platform$Js;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getJsPlatform ()Lio/ktor/util/Platform$JsPlatform;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/ktor/util/Platform$JsPlatform : java/lang/Enum {
+	public static final field Browser Lio/ktor/util/Platform$JsPlatform;
+	public static final field Node Lio/ktor/util/Platform$JsPlatform;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lio/ktor/util/Platform;
-	public static fun values ()[Lio/ktor/util/Platform;
+	public static fun valueOf (Ljava/lang/String;)Lio/ktor/util/Platform$JsPlatform;
+	public static fun values ()[Lio/ktor/util/Platform$JsPlatform;
+}
+
+public final class io/ktor/util/Platform$Jvm : io/ktor/util/Platform {
+	public static final field INSTANCE Lio/ktor/util/Platform$Jvm;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/ktor/util/Platform$Native : io/ktor/util/Platform {
+	public static final field INSTANCE Lio/ktor/util/Platform$Native;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/ktor/util/Platform$WasmJs : io/ktor/util/Platform {
+	public fun <init> (Lio/ktor/util/Platform$JsPlatform;)V
+	public final fun component1 ()Lio/ktor/util/Platform$JsPlatform;
+	public final fun copy (Lio/ktor/util/Platform$JsPlatform;)Lio/ktor/util/Platform$WasmJs;
+	public static synthetic fun copy$default (Lio/ktor/util/Platform$WasmJs;Lio/ktor/util/Platform$JsPlatform;ILjava/lang/Object;)Lio/ktor/util/Platform$WasmJs;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getJsPlatform ()Lio/ktor/util/Platform$JsPlatform;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/ktor/util/PlatformUtils {
 	public static final field INSTANCE Lio/ktor/util/PlatformUtils;
 	public final fun getIS_BROWSER ()Z
 	public final fun getIS_DEVELOPMENT_MODE ()Z
+	public final fun getIS_JS ()Z
 	public final fun getIS_JVM ()Z
 	public final fun getIS_NATIVE ()Z
 	public final fun getIS_NEW_MM_ENABLED ()Z
 	public final fun getIS_NODE ()Z
+	public final fun getIS_WASM_JS ()Z
 }
 
 public final class io/ktor/util/PlatformUtilsJvmKt {
@@ -302,11 +349,11 @@ public final class io/ktor/util/StatelessHmacNonceManager : io/ktor/util/NonceMa
 
 public abstract interface class io/ktor/util/StringValues {
 	public static final field Companion Lio/ktor/util/StringValues$Companion;
-	public abstract fun contains (Ljava/lang/String;)Z
-	public abstract fun contains (Ljava/lang/String;Ljava/lang/String;)Z
+	public fun contains (Ljava/lang/String;)Z
+	public fun contains (Ljava/lang/String;Ljava/lang/String;)Z
 	public abstract fun entries ()Ljava/util/Set;
-	public abstract fun forEach (Lkotlin/jvm/functions/Function2;)V
-	public abstract fun get (Ljava/lang/String;)Ljava/lang/String;
+	public fun forEach (Lkotlin/jvm/functions/Function2;)V
+	public fun get (Ljava/lang/String;)Ljava/lang/String;
 	public abstract fun getAll (Ljava/lang/String;)Ljava/util/List;
 	public abstract fun getCaseInsensitiveName ()Z
 	public abstract fun isEmpty ()Z
@@ -397,6 +444,10 @@ public class io/ktor/util/StringValuesImpl : io/ktor/util/StringValues {
 
 public final class io/ktor/util/StringValuesKt {
 	public static final fun appendAll (Lio/ktor/util/StringValuesBuilder;Lio/ktor/util/StringValuesBuilder;)Lio/ktor/util/StringValuesBuilder;
+	public static final fun appendAll (Lio/ktor/util/StringValuesBuilder;Ljava/util/Map;)Lio/ktor/util/StringValuesBuilder;
+	public static final fun appendAll (Lio/ktor/util/StringValuesBuilder;[Lkotlin/Pair;)Lio/ktor/util/StringValuesBuilder;
+	public static final fun appendAllIterable (Lio/ktor/util/StringValuesBuilder;Ljava/util/Map;)Lio/ktor/util/StringValuesBuilder;
+	public static final fun appendAllIterable (Lio/ktor/util/StringValuesBuilder;[Lkotlin/Pair;)Lio/ktor/util/StringValuesBuilder;
 	public static final fun appendFiltered (Lio/ktor/util/StringValuesBuilder;Lio/ktor/util/StringValues;ZLkotlin/jvm/functions/Function2;)V
 	public static synthetic fun appendFiltered$default (Lio/ktor/util/StringValuesBuilder;Lio/ktor/util/StringValues;ZLkotlin/jvm/functions/Function2;ILjava/lang/Object;)V
 	public static final fun appendIfNameAbsent (Lio/ktor/util/StringValuesBuilder;Ljava/lang/String;Ljava/lang/String;)Lio/ktor/util/StringValuesBuilder;
@@ -444,6 +495,24 @@ public final class io/ktor/util/TextKt {
 
 public final class io/ktor/util/ThrowableKt {
 	public static final fun getRootCause (Ljava/lang/Throwable;)Ljava/lang/Throwable;
+}
+
+public final class io/ktor/util/Zstd : io/ktor/util/Encoder {
+	public fun <init> (I)V
+	public fun decode (Lio/ktor/utils/io/ByteReadChannel;Lkotlin/coroutines/CoroutineContext;)Lio/ktor/utils/io/ByteReadChannel;
+	public fun encode (Lio/ktor/utils/io/ByteReadChannel;Lkotlin/coroutines/CoroutineContext;)Lio/ktor/utils/io/ByteReadChannel;
+	public fun encode (Lio/ktor/utils/io/ByteWriteChannel;Lkotlin/coroutines/CoroutineContext;)Lio/ktor/utils/io/ByteWriteChannel;
+}
+
+public final class io/ktor/util/ZstdEncoder : io/ktor/util/ContentEncoder, io/ktor/util/Encoder {
+	public fun <init> ()V
+	public fun <init> (I)V
+	public synthetic fun <init> (IILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun decode (Lio/ktor/utils/io/ByteReadChannel;Lkotlin/coroutines/CoroutineContext;)Lio/ktor/utils/io/ByteReadChannel;
+	public fun encode (Lio/ktor/utils/io/ByteReadChannel;Lkotlin/coroutines/CoroutineContext;)Lio/ktor/utils/io/ByteReadChannel;
+	public fun encode (Lio/ktor/utils/io/ByteWriteChannel;Lkotlin/coroutines/CoroutineContext;)Lio/ktor/utils/io/ByteWriteChannel;
+	public fun getName ()Ljava/lang/String;
+	public fun predictCompressedLength (J)Ljava/lang/Long;
 }
 
 public final class io/ktor/util/cio/ByteBufferPoolKt {
@@ -545,6 +614,37 @@ public final class io/ktor/util/collections/CopyOnWriteHashMap {
 	public final fun set (Ljava/lang/Object;Ljava/lang/Object;)V
 }
 
+public final class io/ktor/util/collections/MapDelegatesKt {
+	public static final fun asBoolean (Ljava/lang/String;)Lio/ktor/util/collections/SerializedMapValue;
+	public static final fun getValue (Lio/ktor/util/collections/SerializedMapValue;Lio/ktor/util/collections/StringMap;Lkotlin/reflect/KProperty;)Ljava/lang/Object;
+	public static final fun getValue (Ljava/lang/String;Lio/ktor/util/collections/StringMap;Lkotlin/reflect/KProperty;)Ljava/lang/String;
+	public static final fun setValue (Lio/ktor/util/collections/SerializedMapValue;Lio/ktor/util/collections/StringMap;Lkotlin/reflect/KProperty;Ljava/lang/Object;)V
+	public static final fun setValue (Ljava/lang/String;Lio/ktor/util/collections/StringMap;Lkotlin/reflect/KProperty;Ljava/lang/String;)V
+}
+
+public final class io/ktor/util/collections/SerializedMapValue {
+	public fun <init> (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;)V
+}
+
+public abstract interface class io/ktor/util/collections/StringMap {
+	public abstract fun get (Ljava/lang/String;)Ljava/lang/String;
+	public abstract fun remove (Ljava/lang/String;)Ljava/lang/String;
+	public abstract fun set (Ljava/lang/String;Ljava/lang/String;)V
+}
+
+public abstract interface class io/ktor/util/collections/StringMapDelegate : io/ktor/util/collections/StringMap {
+	public fun get (Ljava/lang/String;)Ljava/lang/String;
+	public abstract fun getMap ()Ljava/util/Map;
+	public fun remove (Ljava/lang/String;)Ljava/lang/String;
+	public fun set (Ljava/lang/String;Ljava/lang/String;)V
+}
+
+public final class io/ktor/util/collections/StringMapDelegate$DefaultImpls {
+	public static fun get (Lio/ktor/util/collections/StringMapDelegate;Ljava/lang/String;)Ljava/lang/String;
+	public static fun remove (Lio/ktor/util/collections/StringMapDelegate;Ljava/lang/String;)Ljava/lang/String;
+	public static fun set (Lio/ktor/util/collections/StringMapDelegate;Ljava/lang/String;Ljava/lang/String;)V
+}
+
 public abstract interface class io/ktor/util/converters/ConversionService {
 	public abstract fun fromValues (Ljava/util/List;Lio/ktor/util/reflect/TypeInfo;)Ljava/lang/Object;
 	public abstract fun toValues (Ljava/lang/Object;)Ljava/util/List;
@@ -606,6 +706,7 @@ public final class io/ktor/util/date/DateKt {
 
 public final class io/ktor/util/date/GMTDate : java/lang/Comparable {
 	public static final field Companion Lio/ktor/util/date/GMTDate$Companion;
+	public fun <init> (IIILio/ktor/util/date/WeekDay;IILio/ktor/util/date/Month;IJ)V
 	public fun compareTo (Lio/ktor/util/date/GMTDate;)I
 	public synthetic fun compareTo (Ljava/lang/Object;)I
 	public final fun component1 ()I
@@ -617,6 +718,7 @@ public final class io/ktor/util/date/GMTDate : java/lang/Comparable {
 	public final fun component7 ()Lio/ktor/util/date/Month;
 	public final fun component8 ()I
 	public final fun component9 ()J
+	public final fun copy ()Lio/ktor/util/date/GMTDate;
 	public final fun copy (IIILio/ktor/util/date/WeekDay;IILio/ktor/util/date/Month;IJ)Lio/ktor/util/date/GMTDate;
 	public static synthetic fun copy$default (Lio/ktor/util/date/GMTDate;IIILio/ktor/util/date/WeekDay;IILio/ktor/util/date/Month;IJILjava/lang/Object;)Lio/ktor/util/date/GMTDate;
 	public fun equals (Ljava/lang/Object;)Z
@@ -633,8 +735,20 @@ public final class io/ktor/util/date/GMTDate : java/lang/Comparable {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final synthetic class io/ktor/util/date/GMTDate$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Lio/ktor/util/date/GMTDate$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Lio/ktor/util/date/GMTDate;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Lio/ktor/util/date/GMTDate;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
 public final class io/ktor/util/date/GMTDate$Companion {
 	public final fun getSTART ()Lio/ktor/util/date/GMTDate;
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
 }
 
 public final class io/ktor/util/date/GMTDateParser {
@@ -886,11 +1000,14 @@ public final class io/ktor/util/logging/KtorSimpleLoggerJvmKt {
 }
 
 public final class io/ktor/util/logging/LoggerJvmKt {
+	public static final fun isDebugEnabled (Lorg/slf4j/Logger;)Z
 	public static final fun isTraceEnabled (Lorg/slf4j/Logger;)Z
 }
 
 public final class io/ktor/util/logging/LoggerKt {
+	public static final fun debug (Lorg/slf4j/Logger;Lkotlin/jvm/functions/Function0;)V
 	public static final fun error (Lorg/slf4j/Logger;Ljava/lang/Throwable;)V
+	public static final fun trace (Lorg/slf4j/Logger;Lkotlin/jvm/functions/Function0;)V
 }
 
 public final class io/ktor/util/network/NetworkAddressJvmKt {
@@ -947,14 +1064,10 @@ public final class io/ktor/util/pipeline/PipelinePhase {
 public final class io/ktor/util/reflect/TypeInfo {
 	public fun <init> (Lkotlin/reflect/KClass;Ljava/lang/reflect/Type;Lkotlin/reflect/KType;)V
 	public synthetic fun <init> (Lkotlin/reflect/KClass;Ljava/lang/reflect/Type;Lkotlin/reflect/KType;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public final fun component1 ()Lkotlin/reflect/KClass;
-	public final fun component2 ()Ljava/lang/reflect/Type;
-	public final fun component3 ()Lkotlin/reflect/KType;
-	public final fun copy (Lkotlin/reflect/KClass;Ljava/lang/reflect/Type;Lkotlin/reflect/KType;)Lio/ktor/util/reflect/TypeInfo;
-	public static synthetic fun copy$default (Lio/ktor/util/reflect/TypeInfo;Lkotlin/reflect/KClass;Ljava/lang/reflect/Type;Lkotlin/reflect/KType;ILjava/lang/Object;)Lio/ktor/util/reflect/TypeInfo;
+	public fun <init> (Lkotlin/reflect/KClass;Lkotlin/reflect/KType;)V
+	public synthetic fun <init> (Lkotlin/reflect/KClass;Lkotlin/reflect/KType;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getKotlinType ()Lkotlin/reflect/KType;
-	public final fun getReifiedType ()Ljava/lang/reflect/Type;
 	public final fun getType ()Lkotlin/reflect/KClass;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
@@ -962,7 +1075,12 @@ public final class io/ktor/util/reflect/TypeInfo {
 
 public final class io/ktor/util/reflect/TypeInfoJvmKt {
 	public static final fun getPlatformType (Lkotlin/reflect/KType;)Ljava/lang/reflect/Type;
+	public static final fun getReifiedType (Lio/ktor/util/reflect/TypeInfo;)Ljava/lang/reflect/Type;
 	public static final fun instanceOf (Ljava/lang/Object;Lkotlin/reflect/KClass;)Z
 	public static final fun typeInfoImpl (Ljava/lang/reflect/Type;Lkotlin/reflect/KClass;Lkotlin/reflect/KType;)Lio/ktor/util/reflect/TypeInfo;
+}
+
+public final class io/ktor/util/reflect/TypeKt {
+	public static final fun serializer (Lio/ktor/util/reflect/TypeInfo;)Lkotlinx/serialization/KSerializer;
 }
 

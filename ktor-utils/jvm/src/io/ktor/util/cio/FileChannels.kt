@@ -1,12 +1,10 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.util.cio
 
-import io.ktor.util.*
 import io.ktor.utils.io.*
-import io.ktor.utils.io.core.*
 import io.ktor.utils.io.jvm.nio.*
 import kotlinx.coroutines.*
 import java.io.*
@@ -19,6 +17,8 @@ import kotlin.coroutines.*
  * your async code and freeze the whole application when runs on a pool that is not intended for blocking operations.
  * This is why [coroutineContext] should have [Dispatchers.IO] or
  * a coroutine dispatcher that is properly configured for blocking IO.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.cio.readChannel)
  */
 public fun File.readChannel(
     start: Long = 0,
@@ -26,18 +26,28 @@ public fun File.readChannel(
     coroutineContext: CoroutineContext = Dispatchers.IO
 ): ByteReadChannel {
     val fileLength = length()
-    return CoroutineScope(coroutineContext).writer(CoroutineName("file-reader") + coroutineContext, autoFlush = false) {
+    val randomAccessFile by lazy { RandomAccessFile(this@readChannel, "r") }
+    val writer = CoroutineScope(coroutineContext).writer(
+        CoroutineName("file-reader") + coroutineContext,
+        autoFlush = false
+    ) {
         require(start >= 0L) { "start position shouldn't be negative but it is $start" }
         require(endInclusive <= fileLength - 1) {
             "endInclusive points to the position out of the file: file size = $fileLength, endInclusive = $endInclusive"
         }
 
         @Suppress("BlockingMethodInNonBlockingContext")
-        RandomAccessFile(this@readChannel, "r").use { file ->
+        randomAccessFile.use { file ->
             val fileChannel: FileChannel = file.channel
             fileChannel.writeToScope(this, start, endInclusive)
         }
-    }.channel
+    }
+
+    writer.invokeOnCompletion {
+        randomAccessFile.close()
+    }
+
+    return writer.channel
 }
 
 @Suppress("BlockingMethodInNonBlockingContext")
@@ -51,20 +61,9 @@ internal suspend fun SeekableByteChannel.writeToScope(
     }
 
     if (endInclusive == -1L) {
-        @Suppress("DEPRECATION")
-        writerScope.channel.writeSuspendSession {
-            while (true) {
-                val buffer = request(1)
-                if (buffer == null) {
-                    writerScope.channel.flush()
-                    tryAwait(1)
-                    continue
-                }
-
-                val rc = read(buffer)
-                if (rc == -1) break
-                written(rc)
-            }
+        writerScope.channel.writeWhile { buffer ->
+            val rc = read(buffer)
+            rc != -1
         }
 
         return
@@ -95,6 +94,8 @@ internal suspend fun SeekableByteChannel.writeToScope(
  * your async code and freeze the whole application when runs on a pool that is not intended for blocking operations.
  * This is why [coroutineContext] should have [Dispatchers.IO] or
  * a coroutine dispatcher that is properly configured for blocking IO.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.cio.writeChannel)
  */
 @OptIn(DelicateCoroutinesApi::class)
 public fun File.writeChannel(

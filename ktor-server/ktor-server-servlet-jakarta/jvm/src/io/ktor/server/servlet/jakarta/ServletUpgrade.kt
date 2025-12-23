@@ -15,10 +15,14 @@ import kotlin.coroutines.*
 
 /**
  * Servlet upgrade processing
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.servlet.jakarta.ServletUpgrade)
  */
 public interface ServletUpgrade {
     /**
      * Perform HTTP upgrade using engine's native API
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.servlet.jakarta.ServletUpgrade.performUpgrade)
      */
     public suspend fun performUpgrade(
         upgrade: OutgoingContent.ProtocolUpgrade,
@@ -32,6 +36,8 @@ public interface ServletUpgrade {
 /**
  * The default servlet upgrade implementation using Servlet API.
  * Please note that some servlet containers may not support it or it may be broken.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.servlet.jakarta.DefaultServletUpgrade)
  */
 public object DefaultServletUpgrade : ServletUpgrade {
     @OptIn(InternalAPI::class)
@@ -55,7 +61,6 @@ public object DefaultServletUpgrade : ServletUpgrade {
 // the following types need to be public as they are accessed through reflection
 
 @InternalAPI
-@Suppress("KDocMissingDocumentation")
 public class UpgradeRequest(
     public val response: HttpServletResponse,
     public val upgradeMessage: OutgoingContent.ProtocolUpgrade,
@@ -70,7 +75,6 @@ private val ServletUpgradeCoroutineName = CoroutineName("servlet-upgrade")
 // so we can't pass [UpgradeRequest] through a constructor
 // we also can't make it internal due to the same reason
 @InternalAPI
-@Suppress("KDocMissingDocumentation")
 public class ServletUpgradeHandler : HttpUpgradeHandler, CoroutineScope {
     @Volatile
     public lateinit var up: UpgradeRequest

@@ -9,11 +9,12 @@ import io.ktor.utils.io.*
 
 /**
  * Platform default serializer.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.json.defaultSerializer)
  */
 
 @OptIn(InternalAPI::class)
 public actual fun defaultSerializer(): JsonSerializer = serializers.first()
 
 @InternalAPI
-@Suppress("KDocMissingDocumentation")
 public val serializers: MutableList<JsonSerializer> = mutableListOf()

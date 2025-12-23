@@ -26,9 +26,11 @@ private fun locationOrigin(): String = js(
  * Hostname of current origin.
  *
  * It uses "localhost" for all platforms except js.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.origin)
  */
-public actual val URLBuilder.Companion.origin: String get() =
-    when (PlatformUtils.platform) {
-        Platform.Browser -> locationOrigin()
+public actual val URLBuilder.Companion.origin: String
+    get() = when {
+        PlatformUtils.IS_BROWSER -> locationOrigin()
         else -> "http://localhost"
     }

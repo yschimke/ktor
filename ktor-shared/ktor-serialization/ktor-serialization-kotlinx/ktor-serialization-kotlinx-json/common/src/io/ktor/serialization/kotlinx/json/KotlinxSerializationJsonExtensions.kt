@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.serialization.kotlinx.json
@@ -19,6 +19,8 @@ import kotlin.reflect.*
 
 /**
  * Adds special handling for receiving [Sequence] and sending [Flow] bodies for the Json format.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.kotlinx.json.KotlinxSerializationJsonExtensionProvider)
  */
 public class KotlinxSerializationJsonExtensionProvider : KotlinxSerializationExtensionProvider {
     override fun extension(format: SerialFormat): KotlinxSerializationExtension? {
@@ -98,7 +100,6 @@ internal fun TypeInfo.argumentTypeInfo(): TypeInfo {
     val elementType = kotlinType!!.arguments[0].type!!
     return TypeInfo(
         elementType.classifier as KClass<*>,
-        elementType.platformType,
         elementType
     )
 }

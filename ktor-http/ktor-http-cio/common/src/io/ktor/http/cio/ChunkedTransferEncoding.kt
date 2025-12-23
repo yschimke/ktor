@@ -1,16 +1,18 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.http.cio
 
 import io.ktor.http.cio.internals.*
 import io.ktor.utils.io.*
-import io.ktor.utils.io.bits.*
 import io.ktor.utils.io.core.*
 import io.ktor.utils.io.pool.*
-import kotlinx.coroutines.*
-import kotlin.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.io.EOFException
+import kotlin.coroutines.CoroutineContext
 
 private const val MAX_CHUNK_SIZE_LENGTH = 128
 private const val CHUNK_BUFFER_POOL_SIZE = 2048
@@ -23,14 +25,16 @@ private val ChunkSizeBufferPool: ObjectPool<StringBuilder> =
 
 /**
  * Decoder job type
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.DecoderJob)
  */
-@Suppress("DEPRECATION")
 public typealias DecoderJob = WriterJob
 
 /**
  * Start a chunked stream decoder coroutine
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.decodeChunked)
  */
-@Suppress("TYPEALIAS_EXPANSION_DEPRECATION")
 @Deprecated(
     "Specify content length if known or pass -1L",
     ReplaceWith("decodeChunked(input, -1L)"),
@@ -41,8 +45,10 @@ public fun CoroutineScope.decodeChunked(input: ByteReadChannel): DecoderJob =
 
 /**
  * Start a chunked stream decoder coroutine
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.decodeChunked)
  */
-@Suppress("UNUSED_PARAMETER", "TYPEALIAS_EXPANSION_DEPRECATION")
+@Suppress("UNUSED_PARAMETER")
 public fun CoroutineScope.decodeChunked(input: ByteReadChannel, contentLength: Long): DecoderJob =
     writer(coroutineContext) {
         decodeChunked(input, channel)
@@ -51,19 +57,20 @@ public fun CoroutineScope.decodeChunked(input: ByteReadChannel, contentLength: L
 /**
  * Decode chunked transfer encoding from the [input] channel and write the result in [out].
  *
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.decodeChunked)
+ *
  * @throws EOFException if stream has ended unexpectedly.
  * @throws ParserException if the format is invalid.
  */
+@OptIn(InternalAPI::class)
 public suspend fun decodeChunked(input: ByteReadChannel, out: ByteWriteChannel) {
     val chunkSizeBuffer = ChunkSizeBufferPool.borrow()
     var totalBytesCopied = 0L
 
     try {
-        while (true) {
-            chunkSizeBuffer.clear()
-            if (!input.readUTF8LineTo(chunkSizeBuffer, MAX_CHUNK_SIZE_LENGTH)) {
-                throw EOFException("Chunked stream has ended unexpectedly: no chunk size")
-            } else if (chunkSizeBuffer.isEmpty()) {
+        while (input.readUTF8LineTo(chunkSizeBuffer, MAX_CHUNK_SIZE_LENGTH, httpLineEndings)) {
+            if (chunkSizeBuffer.isEmpty()) {
                 throw EOFException("Invalid chunk size: empty")
             }
 
@@ -77,7 +84,7 @@ public suspend fun decodeChunked(input: ByteReadChannel, out: ByteWriteChannel) 
             }
 
             chunkSizeBuffer.clear()
-            if (!input.readUTF8LineTo(chunkSizeBuffer, 2)) {
+            if (!input.readUTF8LineTo(chunkSizeBuffer, 2, httpLineEndings)) {
                 throw EOFException("Invalid chunk: content block of size $chunkSize ended unexpectedly")
             }
             if (chunkSizeBuffer.isNotEmpty()) {
@@ -91,22 +98,24 @@ public suspend fun decodeChunked(input: ByteReadChannel, out: ByteWriteChannel) 
         throw t
     } finally {
         ChunkSizeBufferPool.recycle(chunkSizeBuffer)
-        out.close()
+        out.flushAndClose()
     }
 }
 
 /**
  * Encoder job type
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.EncoderJob)
  */
-@Suppress("DEPRECATION")
 public typealias EncoderJob = ReaderJob
 
 /**
  * Start chunked stream encoding coroutine
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.encodeChunked)
  */
-@Suppress("TYPEALIAS_EXPANSION_DEPRECATION")
 @OptIn(DelicateCoroutinesApi::class)
-public suspend fun encodeChunked(
+public fun encodeChunked(
     output: ByteWriteChannel,
     coroutineContext: CoroutineContext
 ): EncoderJob = GlobalScope.reader(coroutineContext, autoFlush = false) {
@@ -115,13 +124,15 @@ public suspend fun encodeChunked(
 
 /**
  * Chunked stream encoding loop
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.encodeChunked)
  */
 public suspend fun encodeChunked(output: ByteWriteChannel, input: ByteReadChannel) {
     try {
         while (!input.isClosedForRead) {
             input.read { source, startIndex, endIndex ->
                 if (endIndex == startIndex) return@read 0
-                output.writeChunk(source, startIndex.toInt(), endIndex.toInt())
+                output.writeChunk(source, startIndex, endIndex)
             }
         }
 
@@ -130,12 +141,12 @@ public suspend fun encodeChunked(output: ByteWriteChannel, input: ByteReadChanne
     } catch (cause: Throwable) {
         output.close(cause)
         input.cancel(cause)
+        throw cause
     } finally {
         output.flush()
     }
 }
 
-@Suppress("DEPRECATION")
 private fun ByteReadChannel.rethrowCloseCause() {
     val cause = when (this) {
         is ByteChannel -> closedCause
@@ -148,8 +159,7 @@ private const val CrLfShort: Short = 0x0d0a
 private val CrLf = "\r\n".toByteArray()
 private val LastChunkBytes = "0\r\n\r\n".toByteArray()
 
-@Suppress("DEPRECATION")
-private suspend fun ByteWriteChannel.writeChunk(memory: Memory, startIndex: Int, endIndex: Int): Int {
+private suspend fun ByteWriteChannel.writeChunk(memory: ByteArray, startIndex: Int, endIndex: Int): Int {
     val size = endIndex - startIndex
     writeIntHex(size)
     writeShort(CrLfShort)

@@ -1,6 +1,7 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 package io.ktor.client.tests.plugins
 
 import io.ktor.client.call.*
@@ -10,13 +11,13 @@ import io.ktor.client.plugins.cache.storage.*
 import io.ktor.client.plugins.logging.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import io.ktor.client.tests.utils.*
+import io.ktor.client.test.base.*
 import io.ktor.client.utils.*
 import io.ktor.http.*
 import io.ktor.util.*
 import io.ktor.util.date.*
 import io.ktor.utils.io.*
-import kotlinx.coroutines.*
+import kotlinx.coroutines.delay
 import kotlin.test.*
 
 class CacheTest : ClientLoader() {
@@ -74,7 +75,7 @@ class CacheTest : ClientLoader() {
     }
 
     @Test
-    fun testETagCache() = clientTests(listOf("Js")) {
+    fun testETagCache() = clientTests(except("Js")) {
         val publicStorage = CacheStorage.Unlimited()
         val privateStorage = CacheStorage.Unlimited()
         config {
@@ -98,7 +99,7 @@ class CacheTest : ClientLoader() {
     }
 
     @Test
-    fun testReuseCacheStorage() = clientTests(listOf("Js")) {
+    fun testReuseCacheStorage() = clientTests(except("Js")) {
         val publicStorage = CacheStorage.Unlimited()
         val privateStorage = CacheStorage.Unlimited()
         config {
@@ -123,7 +124,7 @@ class CacheTest : ClientLoader() {
     }
 
     @Test
-    fun testLastModified() = clientTests(listOf("Js")) {
+    fun testLastModified() = clientTests(except("Js")) {
         val publicStorage = CacheStorage.Unlimited()
         val privateStorage = CacheStorage.Unlimited()
         config {
@@ -147,7 +148,7 @@ class CacheTest : ClientLoader() {
     }
 
     @Test
-    fun testVary() = clientTests(listOf("Js")) {
+    fun testVary() = clientTests(except("Js")) {
         val publicStorage = CacheStorage.Unlimited()
         val privateStorage = CacheStorage.Unlimited()
         config {
@@ -204,7 +205,7 @@ class CacheTest : ClientLoader() {
     }
 
     @Test
-    fun testVaryStale() = clientTests(listOf("Js")) {
+    fun testVaryStale() = clientTests(except("Js")) {
         val publicStorage = CacheStorage.Unlimited()
         val privateStorage = CacheStorage.Unlimited()
         config {
@@ -262,7 +263,7 @@ class CacheTest : ClientLoader() {
 
     @OptIn(InternalAPI::class)
     @Test
-    fun testNoVaryIn304() = clientTests(listOf("Js")) {
+    fun testNoVaryIn304() = clientTests(except("Js")) {
         val publicStorage = CacheStorage.Unlimited()
         val privateStorage = CacheStorage.Unlimited()
         config {
@@ -285,7 +286,7 @@ class CacheTest : ClientLoader() {
                     proceedWith(
                         object : HttpResponse() {
                             override val call get() = response.call
-                            override val content get() = response.content
+                            override val rawContent get() = response.rawContent
                             override val coroutineContext get() = response.coroutineContext
                             override val headers = headers
                             override val requestTime get() = response.requestTime
@@ -544,7 +545,7 @@ class CacheTest : ClientLoader() {
     }
 
     @Test
-    fun testNoStoreRequest() = clientTests(listOf("Js")) {
+    fun testNoStoreRequest() = clientTests(except("Js")) {
         val publicStorage = CacheStorage.Unlimited()
         val privateStorage = CacheStorage.Unlimited()
         config {
@@ -570,7 +571,7 @@ class CacheTest : ClientLoader() {
     }
 
     @Test
-    fun testNoCacheRequest() = clientTests(listOf("Js")) {
+    fun testNoCacheRequest() = clientTests(except("Js")) {
         val publicStorage = CacheStorage.Unlimited()
         val privateStorage = CacheStorage.Unlimited()
         config {
@@ -602,7 +603,7 @@ class CacheTest : ClientLoader() {
     }
 
     @Test
-    fun testRequestWithMaxAge0() = clientTests(listOf("Js")) {
+    fun testRequestWithMaxAge0() = clientTests(except("Js")) {
         val publicStorage = CacheStorage.Unlimited()
         val privateStorage = CacheStorage.Unlimited()
         config {
@@ -817,6 +818,107 @@ class CacheTest : ClientLoader() {
             client.get("$TEST_SERVER/cache/set-max-age").apply {
                 assertEquals(HttpStatusCode.OK, status)
             }
+        }
+    }
+
+    @Test
+    fun testInvalidMaxAge() = clientTests {
+        config {
+            install(HttpCache)
+        }
+
+        test { client ->
+            val url = Url("$TEST_SERVER/cache/invalid-max-age")
+
+            client.get(url).apply {
+                assertEquals(HttpStatusCode.OK, status)
+            }
+        }
+    }
+
+    @Test
+    fun testDifferentVaryHeaders() = clientTests {
+        val storage = CacheStorage.Unlimited()
+        config {
+            install(HttpCache) {
+                publicStorage(storage)
+            }
+        }
+
+        test { client ->
+            val url = "$TEST_SERVER/cache/different-vary"
+            val first = client.get(url) {
+                header("200", "true")
+            }
+            val second = client.get(url)
+
+            assertEquals(first.bodyAsText(), second.bodyAsText())
+            assertEquals(storage.findAll(Url("$TEST_SERVER/cache/different-vary")).size, 1)
+        }
+    }
+
+    @Test
+    fun testVaryHeader() = clientTests {
+        val publicStorage = CacheStorage.Unlimited()
+        val privateStorage = CacheStorage.Unlimited()
+        config {
+            install(HttpCache) {
+                publicStorage(publicStorage)
+                privateStorage(privateStorage)
+            }
+        }
+
+        test { client ->
+            val url = Url("$TEST_SERVER/cache/vary-header")
+
+            client.get(url) {
+                header("Accept", "application/json")
+            }
+            client.get(url) {
+                header("Accept", "application/json")
+                header("Accept", "application/cbor")
+            }
+
+            assertEquals(2, publicStorage.findAll(url).size)
+        }
+    }
+
+    @Test
+    fun testCaseSensitiveInVary() = clientTests {
+        val publicStorage = CacheStorage.Unlimited()
+        val privateStorage = CacheStorage.Unlimited()
+        config {
+            install(HttpCache) {
+                publicStorage(publicStorage)
+                privateStorage(privateStorage)
+            }
+        }
+
+        test { client ->
+            val url = Url("$TEST_SERVER/cache/vary-header-case-sensitive")
+
+            var count = 1
+            val response1 = client.get(url) {
+                header(HttpHeaders.AcceptLanguage, "en-US")
+                header("Count", count++)
+            }.bodyAsText()
+
+            val response2 = client.get(url) {
+                header(HttpHeaders.AcceptLanguage, "en-US")
+                header("Count", count++)
+            }.bodyAsText()
+
+            val response3 = client.get(url) {
+                headers {
+                    append(HttpHeaders.CacheControl, "only-if-cached, max-stale=10000")
+                    append(HttpHeaders.AcceptLanguage, "en-US")
+                    header("Count", count++)
+                }
+            }.bodyAsText()
+
+            assertEquals("1", response1)
+            assertEquals("2", response2)
+            assertEquals("2", response3)
         }
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2023 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.tests.server.tomcat.jakarta
@@ -12,13 +12,19 @@ import io.ktor.server.routing.*
 import io.ktor.server.servlet.jakarta.*
 import io.ktor.server.testing.suites.*
 import io.ktor.server.tomcat.jakarta.*
-import jakarta.servlet.*
 import jakarta.servlet.Filter
-import org.apache.catalina.core.*
-import org.apache.tomcat.util.descriptor.web.*
-import java.io.*
-import java.util.logging.*
-import kotlin.test.*
+import jakarta.servlet.FilterChain
+import jakarta.servlet.ServletRequest
+import jakarta.servlet.ServletResponse
+import org.apache.catalina.core.StandardContext
+import org.apache.tomcat.util.descriptor.web.FilterDef
+import org.apache.tomcat.util.descriptor.web.FilterMap
+import java.io.File
+import java.util.logging.Level
+import java.util.logging.Logger
+import kotlin.test.Ignore
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 class TomcatCompressionTest :
     CompressionTestSuite<TomcatApplicationEngine, TomcatApplicationEngine.Configuration>(Tomcat) {
@@ -40,9 +46,7 @@ class TomcatContentTest : ContentTestSuite<TomcatApplicationEngine, TomcatApplic
         enableHttp2 = false
     }
 
-    /**
-     * Tomcat 9.0.56 issue
-     */
+    // Tomcat 9.0.56 issue
     @Ignore
     override fun testMultipartFileUpload() {
     }
@@ -82,7 +86,7 @@ class TomcatHttpServerJvmTest :
     }
 
     @Test
-    fun testServletAttributes() {
+    fun testServletAttributes() = runTest {
         createAndStartServer {
             get("/tomcat/attributes") {
                 call.respondText(
@@ -155,6 +159,8 @@ class TomcatSustainabilityTestSuite :
 
     /**
      * Tomcat trim `vspace` symbol and drop content-length. The request is treated as chunked.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.tests.server.tomcat.jakarta.TomcatSustainabilityTestSuite.testChunkedWithVSpace)
      */
     @Ignore
     @Test

@@ -24,13 +24,14 @@ import io.ktor.client.engine.*
  * ```
  *
  * You can learn more about client engines from [Engines](https://ktor.io/docs/http-client-engines.html).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.java.Java)
  */
-public object Java : HttpClientEngineFactory<JavaHttpConfig> {
+public data object Java : HttpClientEngineFactory<JavaHttpConfig> {
     override fun create(block: JavaHttpConfig.() -> Unit): HttpClientEngine =
         JavaHttpEngine(JavaHttpConfig().apply(block))
 }
 
-@Suppress("KDocMissingDocumentation")
 public class JavaHttpEngineContainer : HttpClientEngineContainer {
     override val factory: HttpClientEngineFactory<*> = Java
 

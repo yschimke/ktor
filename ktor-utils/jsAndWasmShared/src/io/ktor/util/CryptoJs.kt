@@ -1,6 +1,6 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.util
 
@@ -10,18 +10,19 @@ import kotlin.js.*
 
 /**
  * Generates a nonce string.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.generateNonce)
  */
 public actual fun generateNonce(): String {
     val buffer = ByteArray(NONCE_SIZE_IN_BYTES).toJsArray()
-    when (PlatformUtils.platform) {
-        Platform.Node -> _crypto.randomFillSync(buffer)
-        else -> _crypto.getRandomValues(buffer)
-    }
+    _crypto.getRandomValues(buffer)
     return hex(buffer.toByteArray())
 }
 
 /**
  * Create [Digest] from specified hash [name].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.Digest)
  */
 public actual fun Digest(name: String): Digest = object : Digest {
     private val state = mutableListOf<ByteArray>()
@@ -41,24 +42,15 @@ public actual fun Digest(name: String): Digest = object : Digest {
     }
 }
 
-private fun requireCrypto(): Crypto = js("eval('require')('crypto')")
-private fun windowCrypto(): Crypto = js("(window ? (window.crypto ? window.crypto : window.msCrypto) : self.crypto)")
-
 // Variable is renamed to `_crypto` so it wouldn't clash with existing `crypto` variable.
 // JS IR backend doesn't reserve names accessed inside js("") calls
-private val _crypto: Crypto by lazy { // lazy because otherwise it's untestable due to evaluation order
-    when (PlatformUtils.platform) {
-        Platform.Node -> requireCrypto()
-        else -> windowCrypto()
-    }
-}
+@Suppress("ObjectPropertyName")
+private val _crypto: Crypto = js("(globalThis ? globalThis.crypto : (window.crypto || window.msCrypto))")
 
 private external class Crypto {
     val subtle: SubtleCrypto
 
     fun getRandomValues(array: Int8Array)
-
-    fun randomFillSync(array: Int8Array)
 }
 
 private external class SubtleCrypto {
@@ -67,5 +59,7 @@ private external class SubtleCrypto {
 
 /**
  * Compute SHA-1 hash for the specified [bytes]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.sha1)
  */
 public actual fun sha1(bytes: ByteArray): ByteArray = Sha1().digest(bytes)

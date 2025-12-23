@@ -1,20 +1,24 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.tests
 
+import io.ktor.client.call.*
 import io.ktor.client.engine.mock.*
 import io.ktor.client.plugins.*
+import io.ktor.client.plugins.compression.*
 import io.ktor.client.request.*
-import io.ktor.client.tests.utils.*
+import io.ktor.client.test.base.*
 import io.ktor.http.*
-import io.ktor.utils.io.errors.*
+import io.ktor.util.*
+import io.ktor.utils.io.*
 import kotlinx.coroutines.*
-import kotlin.math.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.io.IOException
 import kotlin.test.*
+import kotlin.time.Duration.Companion.seconds
 
-@Suppress("DEPRECATION")
 class HttpRequestRetryTest {
 
     @Test
@@ -34,13 +38,13 @@ class HttpRequestRetryTest {
 
         test { client ->
             client.get { }
-            assertTrue(
-                delays
-                    .foldIndexed(true) { index, acc, delay ->
-                        val expectedDelay = (2.0.pow(index + 1) * 1000).toLong()
-                        acc && delay in expectedDelay..expectedDelay + 1000
-                    }
-            )
+
+            val expectedDelays = listOf(1000L, 2000L, 4000L)
+            assertEquals(expectedDelays.size, delays.size)
+
+            expectedDelays.zip(delays).forEach { (expected, actual) ->
+                assertTrue { actual in expected..expected + 1000 }
+            }
         }
     }
 
@@ -99,7 +103,7 @@ class HttpRequestRetryTest {
     }
 
     @Test
-    fun testExponentialDelay() = testWithEngine(MockEngine) {
+    fun testExponentialDelayDefaults() = testWithEngine(MockEngine) {
         val delays = mutableListOf<Long>()
         config {
             engine {
@@ -117,7 +121,53 @@ class HttpRequestRetryTest {
 
         test { client ->
             client.get { }
-            assertEquals(listOf(2000L, 4000L, 8000L), delays)
+            assertEquals(listOf(1000L, 2000L, 4000L), delays)
+        }
+    }
+
+    @Test
+    fun testExponentialDelayExplicitBaseDelay() = testWithEngine(MockEngine) {
+        val delays = mutableListOf<Long>()
+        config {
+            engine {
+                addHandler { respondError(HttpStatusCode.InternalServerError) }
+                addHandler { respondError(HttpStatusCode.InternalServerError) }
+                addHandler { respondError(HttpStatusCode.InternalServerError) }
+                addHandler { respondOk() }
+            }
+            install(HttpRequestRetry) {
+                retryOnServerErrors(3)
+                exponentialDelay(randomizationMs = 0, baseDelayMs = 200)
+                delay { delays.add(it) }
+            }
+        }
+
+        test { client ->
+            client.get { }
+            assertEquals(listOf(200L, 400L, 800L), delays)
+        }
+    }
+
+    @Test
+    fun testExponentialDelayExplicitBase() = testWithEngine(MockEngine) {
+        val delays = mutableListOf<Long>()
+        config {
+            engine {
+                addHandler { respondError(HttpStatusCode.InternalServerError) }
+                addHandler { respondError(HttpStatusCode.InternalServerError) }
+                addHandler { respondError(HttpStatusCode.InternalServerError) }
+                addHandler { respondOk() }
+            }
+            install(HttpRequestRetry) {
+                retryOnServerErrors(3)
+                exponentialDelay(randomizationMs = 0, base = 1.1)
+                delay { delays.add(it) }
+            }
+        }
+
+        test { client ->
+            client.get { }
+            assertEquals(listOf(1000L, 1100L, 1210L), delays)
         }
     }
 
@@ -409,6 +459,60 @@ class HttpRequestRetryTest {
 
         test { client ->
             val response = client.get {}
+            assertEquals(HttpStatusCode.OK, response.status)
+        }
+    }
+
+    @Test
+    fun testResponseBodyCheckIgnoresEmpty() = testWithEngine(MockEngine) {
+        config {
+            engine {
+                addHandler { respondError(HttpStatusCode.Unauthorized, "") }
+            }
+            install(HttpRequestRetry) {
+                retryOnExceptionIf(1) { _, e ->
+                    e.printStackTrace()
+                    true
+                }
+            }
+        }
+
+        test { client ->
+            try {
+                val response = client.get { }
+                assertEquals(HttpStatusCode.Unauthorized, response.status)
+                assertEquals("", response.body())
+            } catch (cause: Throwable) {
+                fail("No exception should be thrown", cause)
+            }
+        }
+    }
+
+    // KTOR-8820
+    @Test
+    fun testRetryWithLargeEncodedBody() = testWithEngine(MockEngine, timeout = 1.seconds) {
+        config {
+            engine {
+                addHandler {
+                    // Compressed body size should be larger than DEFAULT_BUFFER_SIZE to reproduce the bug
+                    val bytes = ByteArray(2 * 1024 * 1024) { it.toByte() }
+                    respond(
+                        GZipEncoder.encode(ByteReadChannel(bytes)),
+                        headers = headersOf(HttpHeaders.ContentEncoding, "gzip"),
+                    )
+                }
+            }
+
+            install(HttpRequestRetry) {
+                noRetry()
+            }
+            install(ContentEncoding) {
+                gzip()
+            }
+        }
+
+        test { client ->
+            val response = client.get { }
             assertEquals(HttpStatusCode.OK, response.status)
         }
     }

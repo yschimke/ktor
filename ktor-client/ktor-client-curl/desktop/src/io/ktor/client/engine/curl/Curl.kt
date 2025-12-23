@@ -44,21 +44,20 @@ private val initHook = Curl
  * ```
  *
  * You can learn more about client engines from [Engines](https://ktor.io/docs/http-client-engines.html).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.curl.Curl)
  */
 @OptIn(InternalAPI::class)
-public object Curl : HttpClientEngineFactory<CurlClientEngineConfig> {
+public data object Curl : HttpClientEngineFactory<CurlClientEngineConfig> {
     init {
         engines.append(this)
     }
 
     override fun create(block: CurlClientEngineConfig.() -> Unit): HttpClientEngine {
-        @Suppress("DEPRECATION")
         if (curlGlobalInitReturnCode != 0) {
-            throw CurlRuntimeException("curl_global_init() returned non-zero verify: $curlGlobalInitReturnCode")
+            throw RuntimeException("curl_global_init() returned non-zero verify: $curlGlobalInitReturnCode")
         }
 
         return CurlClientEngine(CurlClientEngineConfig().apply(block))
     }
-
-    override fun toString(): String = "Curl"
 }

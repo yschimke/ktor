@@ -5,16 +5,22 @@
 package io.ktor.http.cio
 
 import io.ktor.http.*
+import io.ktor.utils.io.*
 import io.ktor.utils.io.core.*
+import kotlinx.io.*
 
 /**
  * Builds an HTTP request or response
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.RequestResponseBuilder)
  */
 public actual class RequestResponseBuilder actual constructor() {
     private val packet = BytePacketBuilder()
 
     /**
      * Append response status line
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.RequestResponseBuilder.responseLine)
      */
     public actual fun responseLine(version: CharSequence, status: Int, statusText: CharSequence) {
         packet.writeText(version)
@@ -28,6 +34,8 @@ public actual class RequestResponseBuilder actual constructor() {
 
     /**
      * Append request line
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.RequestResponseBuilder.requestLine)
      */
     public actual fun requestLine(method: HttpMethod, uri: CharSequence, version: CharSequence) {
         packet.writeText(method.value)
@@ -41,6 +49,8 @@ public actual class RequestResponseBuilder actual constructor() {
 
     /**
      * Append a line
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.RequestResponseBuilder.line)
      */
     public actual fun line(line: CharSequence) {
         packet.append(line)
@@ -50,6 +60,8 @@ public actual class RequestResponseBuilder actual constructor() {
 
     /**
      * Append raw bytes
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.RequestResponseBuilder.bytes)
      */
     public actual fun bytes(content: ByteArray, offset: Int, length: Int) {
         packet.writeFully(content, offset, length)
@@ -57,6 +69,8 @@ public actual class RequestResponseBuilder actual constructor() {
 
     /**
      * Append header line
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.RequestResponseBuilder.headerLine)
      */
     public actual fun headerLine(name: CharSequence, value: CharSequence) {
         packet.append(name)
@@ -68,6 +82,8 @@ public actual class RequestResponseBuilder actual constructor() {
 
     /**
      * Append an empty line (CR + LF in fact)
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.RequestResponseBuilder.emptyLine)
      */
     public actual fun emptyLine() {
         packet.writeByte(CR)
@@ -76,14 +92,20 @@ public actual class RequestResponseBuilder actual constructor() {
 
     /**
      * Build a packet of request/response
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.RequestResponseBuilder.build)
      */
-    public actual fun build(): ByteReadPacket = packet.build()
+
+    public actual fun build(): Source = packet.build()
 
     /**
      * Release all resources hold by the builder
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.RequestResponseBuilder.release)
      */
+
     public actual fun release() {
-        packet.release()
+        packet.close()
     }
 }
 

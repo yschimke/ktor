@@ -7,15 +7,14 @@ package io.ktor.client.engine.mock
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.http.content.*
-import io.ktor.util.*
 import io.ktor.util.date.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.charsets.*
 import io.ktor.utils.io.core.*
 import kotlinx.coroutines.*
+import kotlinx.io.*
 
 @OptIn(DelicateCoroutinesApi::class)
-@Suppress("KDocMissingDocumentation")
 public suspend fun OutgoingContent.toByteArray(): ByteArray = when (this) {
     is OutgoingContent.ContentWrapper -> delegate().toByteArray()
     is OutgoingContent.ByteArrayContent -> bytes()
@@ -28,12 +27,13 @@ public suspend fun OutgoingContent.toByteArray(): ByteArray = when (this) {
         }
         channel.toByteArray()
     }
+
     is OutgoingContent.ProtocolUpgrade, is OutgoingContent.NoContent -> EmptyArray
 }
 
-@Suppress("KDocMissingDocumentation")
+@Suppress("KDocMissingDocumentation", "DEPRECATION")
 @OptIn(DelicateCoroutinesApi::class)
-public suspend fun OutgoingContent.toByteReadPacket(): ByteReadPacket = when (this) {
+public suspend fun OutgoingContent.toByteReadPacket(): Source = when (this) {
     is OutgoingContent.ByteArrayContent -> ByteReadPacket(bytes())
     is OutgoingContent.ReadChannelContent -> readFrom().readRemaining()
     is OutgoingContent.WriteChannelContent -> {
@@ -45,11 +45,13 @@ public suspend fun OutgoingContent.toByteReadPacket(): ByteReadPacket = when (th
         channel.readRemaining()
     }
 
-    else -> ByteReadPacket.Empty
+    else -> ByteReadPacketEmpty
 }
 
 /**
  * Send error response.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.mock.respondError)
  */
 public fun MockRequestHandleScope.respondError(
     status: HttpStatusCode,
@@ -59,6 +61,8 @@ public fun MockRequestHandleScope.respondError(
 
 /**
  * Send ok response.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.mock.respondOk)
  */
 public fun MockRequestHandleScope.respondOk(
     content: String = ""
@@ -66,6 +70,8 @@ public fun MockRequestHandleScope.respondOk(
 
 /**
  * Respond redirect with [location] in Location header.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.mock.respondRedirect)
  */
 public fun MockRequestHandleScope.respondRedirect(
     location: String = ""
@@ -73,12 +79,16 @@ public fun MockRequestHandleScope.respondRedirect(
 
 /**
  * Send [HttpStatusCode.BadRequest] response.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.mock.respondBadRequest)
  */
 public fun MockRequestHandleScope.respondBadRequest(): HttpResponseData =
     respond("Bad Request", HttpStatusCode.BadRequest)
 
 /**
  * Send response with specified string [content], [status] and [headers].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.mock.respond)
  */
 public fun MockRequestHandleScope.respond(
     content: String,
@@ -89,6 +99,8 @@ public fun MockRequestHandleScope.respond(
 
 /**
  * Send response with specified bytes [content], [status] and [headers].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.mock.respond)
  */
 public fun MockRequestHandleScope.respond(
     content: ByteArray,
@@ -98,6 +110,8 @@ public fun MockRequestHandleScope.respond(
 
 /**
  * Send response with specified [ByteReadChannel] [content], [status] and [headers].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.mock.respond)
  */
 public fun MockRequestHandleScope.respond(
     content: ByteReadChannel,

@@ -52,7 +52,7 @@ internal val HexLetterTable: ByteArray = (0..0xf).map {
 internal fun CharSequence.parseHexLong(): Long {
     var result = 0L
     val table = HexTable
-    for (i in 0 until length) {
+    for (i in indices) {
         val v = this[i].code and 0xffff
         val digit = if (v < 0xff) table[v] else -1L
         if (digit == -1L) hexNumberFormatException(this, i)
@@ -64,6 +64,8 @@ internal fun CharSequence.parseHexLong(): Long {
 
 /**
  * Converts [CharSequence] representation in decimal format to [Long]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.internals.parseDecLong)
  */
 public fun CharSequence.parseDecLong(): Long {
     val length = length
@@ -83,7 +85,7 @@ public fun CharSequence.parseDecLong(): Long {
 
 private fun CharSequence.parseDecLongWithCheck(): Long {
     var result = 0L
-    for (i in 0 until length) {
+    for (i in indices) {
         val digit = this[i].code.toLong() - 0x30L
         if (digit < 0 || digit > 9) numberFormatException(this, i)
 

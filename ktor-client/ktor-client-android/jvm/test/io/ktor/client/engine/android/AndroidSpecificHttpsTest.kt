@@ -1,9 +1,10 @@
 /*
- * Copyright 2014-2023 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.engine.android
 
+import android.net.http.*
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.*
@@ -16,18 +17,20 @@ import io.ktor.server.engine.*
 import io.ktor.server.netty.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import kotlinx.coroutines.*
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.BeforeAll
-import java.io.*
-import java.security.*
-import javax.net.ssl.*
-import kotlin.test.*
+import java.io.File
+import java.security.KeyStore
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
 import kotlin.test.Test
+import kotlin.test.assertEquals
 
 class AndroidSpecificHttpsTest : TestWithKtor() {
     override val server: EmbeddedServer<*, *> = embeddedServer(
         Netty,
-        applicationProperties {
+        serverConfig {
             module {
                 routing {
                     get("/") {
@@ -94,6 +97,51 @@ class AndroidSpecificHttpsTest : TestWithKtor() {
             Android.config {
                 sslManager = { conn ->
                     conn.sslSocketFactory = sslContext.socketFactory
+                }
+            }
+        ).use { client ->
+            val actual = client.get("https://127.0.0.1:$serverPort/").body<String>()
+            assertEquals("Hello, world", actual)
+        }
+    }
+
+    @Test
+    fun withAndroid14Customisations(): Unit = runBlocking {
+        HttpClient(
+            Android.config {
+                // Demonstrating options, but ultimately still using URLConnection against localhost
+                sslManager = { conn ->
+                    conn.sslSocketFactory = sslContext.socketFactory
+                }
+
+//                this.context = context
+                httpEngineConfig = {
+//                    val cacheDir =
+//                        context.cacheDir.resolve("httpEngine").also {
+//                            it.mkdirs()
+//                        }
+
+                    setEnableBrotli(true)
+//                    setStoragePath(cacheDir.path)
+                    setConnectionMigrationOptions(
+                        ConnectionMigrationOptions.Builder()
+                            .setDefaultNetworkMigration(ConnectionMigrationOptions.MIGRATION_OPTION_ENABLED)
+                            .setPathDegradationMigration(ConnectionMigrationOptions.MIGRATION_OPTION_ENABLED)
+                            .setAllowNonDefaultNetworkUsage(ConnectionMigrationOptions.MIGRATION_OPTION_ENABLED)
+                            .build(),
+                    )
+                    setDnsOptions(
+                        DnsOptions.Builder()
+                            .setUseHttpStackDnsResolver(DnsOptions.DNS_OPTION_ENABLED)
+                            .setStaleDns(DnsOptions.DNS_OPTION_ENABLED)
+                            .setPersistHostCache(DnsOptions.DNS_OPTION_ENABLED)
+                            .build(),
+                    )
+                    setQuicOptions(
+                        QuicOptions.Builder()
+                            .build(),
+                    )
+                    addQuicHint("www.google.com", 443, 443)
                 }
             }
         ).use { client ->

@@ -4,27 +4,34 @@
 
 package io.ktor.http
 
+import io.ktor.http.header.*
 import io.ktor.util.*
 
 /**
  * Represents HTTP headers as a map from case-insensitive names to collection of [String] values
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.Headers)
  */
 public interface Headers : StringValues {
     public companion object {
         /**
          * Empty [Headers] instance
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.Headers.Companion.Empty)
          */
         public val Empty: Headers = EmptyHeaders
 
         /**
          * Builds a [Headers] instance with the given [builder] function
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.Headers.Companion.build)
+         *
          * @param builder specifies a function to build a map
          */
         public inline fun build(builder: HeadersBuilder.() -> Unit): Headers = HeadersBuilder().apply(builder).build()
     }
 }
 
-@Suppress("KDocMissingDocumentation")
 public class HeadersBuilder(size: Int = 8) : StringValuesBuilderImpl(true, size) {
     override fun build(): Headers {
         return HeadersImpl(values)
@@ -52,41 +59,71 @@ private object EmptyHeaders : Headers {
 
 /**
  * Returns empty headers
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.headersOf)
  */
 public fun headersOf(): Headers = Headers.Empty
 
 /**
  * Returns [Headers] instance containing only one header with the specified [name] and [value]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.headersOf)
  */
 public fun headersOf(name: String, value: String): Headers = HeadersSingleImpl(name, listOf(value))
 
 /**
  * Returns [Headers] instance containing only one header with the specified [name] and [values]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.headersOf)
  */
 public fun headersOf(name: String, values: List<String>): Headers = HeadersSingleImpl(name, values)
 
 /**
  * Returns [Headers] instance from [pairs]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.headersOf)
  */
 public fun headersOf(vararg pairs: Pair<String, List<String>>): Headers = HeadersImpl(pairs.asList().toMap())
 
 /**
  * Builds a [Headers] instance with the given [builder] function
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.headers)
+ *
  * @param builder specifies a function to build a map
  */
 public fun headers(builder: HeadersBuilder.() -> Unit): Headers = Headers.build(builder)
 
-@Suppress("KDocMissingDocumentation")
 public class HeadersImpl(
     values: Map<String, List<String>> = emptyMap()
 ) : Headers, StringValuesImpl(true, values) {
     override fun toString(): String = "Headers ${entries()}"
 }
 
-@Suppress("KDocMissingDocumentation")
 public class HeadersSingleImpl(
     name: String,
     values: List<String>
 ) : Headers, StringValuesSingleImpl(true, name, values) {
     override fun toString(): String = "Headers ${entries()}"
+}
+
+/**
+ * Gets all values associated with the specified header [name] and splits them using the provided [separator].
+ *
+ * If [splitInsideQuotes] is true, the function ignores quotes entirely and splits everywhere the [separator] appears.
+ * Otherwise, [separator] that occurs inside a double-quoted string isn't treated as a split point.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.getSplitValues)
+ *
+ *  @param name The header name.
+ *  @param separator The character on which to split (e.g., ',' or ';').
+ *  @param splitInsideQuotes If `true`, quotes are ignored and splitting occurs at every [separator].
+ *                           If `false`, separators inside quoted strings are not considered split points.
+ */
+public fun Headers.getSplitValues(
+    name: String,
+    separator: Char = ',',
+    splitInsideQuotes: Boolean = false
+): List<String>? {
+    return splitHeaderValues(getAll(name) ?: return null, separator, splitInsideQuotes)
 }

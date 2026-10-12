@@ -1,13 +1,12 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.jte
 
-import gg.jte.*
-import gg.jte.output.*
+import gg.jte.TemplateEngine
+import gg.jte.output.StringOutput
 import io.ktor.http.*
-import io.ktor.http.ContentType
 import io.ktor.http.content.*
 import io.ktor.server.application.*
 import io.ktor.server.application.hooks.*
@@ -15,6 +14,8 @@ import io.ktor.utils.io.*
 
 /**
  * A response content handled by the [Jte] plugin.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.jte.JteContent)
  *
  * @param template file name that is resolved by the Jte [TemplateEngine]
  * @param params to be passed to the template
@@ -30,6 +31,8 @@ public class JteContent(
 
 /**
  * A configuration for the [Jte] plugin, where the Jte [TemplateEngine] can be customized.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.jte.JteConfig)
  */
 @KtorDsl
 public class JteConfig {
@@ -40,6 +43,8 @@ public class JteConfig {
  * A plugin that allows you to use jte templates as views within your application.
  * Provides the ability to respond with [JteContent].
  * You can learn more from [JTE](https://ktor.io/docs/jte.html).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.jte.Jte)
  */
 public val Jte: ApplicationPlugin<JteConfig> = createApplicationPlugin("jte", ::JteConfig) {
 

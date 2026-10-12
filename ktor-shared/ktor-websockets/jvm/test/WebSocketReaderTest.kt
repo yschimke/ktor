@@ -8,6 +8,7 @@ import io.ktor.utils.io.*
 import io.ktor.utils.io.core.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
+import java.nio.*
 import kotlin.test.*
 
 class WebSocketReaderTest {
@@ -16,8 +17,8 @@ class WebSocketReaderTest {
         serializer.enqueue(frame)
 
         while (serializer.hasOutstandingBytes) {
-            channel.write {
-                serializer.serialize(it)
+            channel.write { buffer: ByteBuffer ->
+                serializer.serialize(buffer)
             }
         }
     }
@@ -27,8 +28,11 @@ class WebSocketReaderTest {
         val channel = ByteChannel(true)
         runBlocking {
             val reader = WebSocketReader(channel, coroutineContext, 1000)
-            val frame = Frame.Ping(ByteArray(126))
-            writeFrame(channel, frame)
+            channel.write { buffer: ByteBuffer ->
+                buffer.put(0x89.toByte())
+                buffer.put(0x7E.toByte())
+            }
+            channel.flush()
             assertFailsWith<ProtocolViolationException> {
                 reader.incoming.receive()
             }

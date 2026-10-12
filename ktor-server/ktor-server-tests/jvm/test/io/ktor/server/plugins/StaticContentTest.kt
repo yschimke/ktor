@@ -1,12 +1,14 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.plugins
 
+import com.sun.nio.file.SensitivityWatchEventModifier
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import io.ktor.http.content.*
 import io.ktor.server.application.*
 import io.ktor.server.http.content.*
 import io.ktor.server.plugins.autohead.*
@@ -17,23 +19,67 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.testing.*
-import java.io.*
-import java.nio.file.*
-import kotlin.io.path.*
+import io.ktor.util.date.*
+import kotlinx.coroutines.delay
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.FileSystems
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.nio.file.StandardWatchEventKinds
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import kotlin.io.path.absolutePathString
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.name
+import kotlin.io.path.pathString
+import kotlin.io.path.writeText
 import kotlin.test.*
 
-@Suppress("DEPRECATION")
 class StaticContentTest {
     val basedir =
         listOf(File("jvm/test"), File("ktor-server/ktor-server-tests/jvm/test"))
             .map { File(it, "io/ktor/server") }
             .first(File::exists)
 
-    private operator fun File.get(relativePath: String) = File(this, relativePath)
+    @Test
+    fun testResourcesVaryHeaderWithPreCompressed() = testApplication {
+        routing {
+            staticFiles("staticFiles", File("jvm/test-resources/public")) {
+                preCompressed(CompressedFileType.BROTLI)
+            }
+            staticFileSystem("staticFileSystem", "jvm/test-resources/public") {
+                preCompressed(CompressedFileType.BROTLI)
+            }
+            staticResources("staticResources", "public") {
+                preCompressed(CompressedFileType.BROTLI)
+            }
+        }
+
+        suspend fun testVaryHeader(path: String) {
+            client.get(path).let { response ->
+                assertNull(response.headers[HttpHeaders.Vary])
+            }
+
+            client.get(path) {
+                headers {
+                    append(HttpHeaders.AcceptEncoding, "br")
+                }
+            }.let { response ->
+                assertEquals(HttpHeaders.AcceptEncoding, response.headers[HttpHeaders.Vary])
+            }
+        }
+
+        testVaryHeader("staticFiles/nested/file-nested.txt")
+        testVaryHeader("staticFileSystem/nested/file-nested.txt")
+        testVaryHeader("staticResources/nested/file-nested.txt")
+    }
 
     @Test
-    fun testStaticContentBuilder() = withTestApplication {
-        application.routing {
+    @Suppress("DEPRECATION")
+    fun testLegacyBuilder() = testApplication {
+        routing {
             static("files") {
                 files(basedir)
             }
@@ -53,51 +99,52 @@ class StaticContentTest {
         }
 
         // get file from nested folder
-        handleRequest(HttpMethod.Get, "/files/plugins/StaticContentTest.kt").let { result ->
-            assertEquals(HttpStatusCode.OK, result.response.status())
+        client.get("/files/plugins/StaticContentTest.kt").let { response ->
+            assertEquals(HttpStatusCode.OK, response.status)
         }
         // get file from a subfolder
-        handleRequest(HttpMethod.Get, "/selected/StaticContentTest.kt").let { result ->
-            assertEquals(HttpStatusCode.OK, result.response.status())
+        client.get("/selected/StaticContentTest.kt").let { response ->
+            assertEquals(HttpStatusCode.OK, response.status)
         }
         // can't get up to containing folder
-        handleRequest(HttpMethod.Get, "/selected/../plugins/StaticContentTest.kt").let { result ->
-            assertFalse(result.response.status()!!.isSuccess())
+        client.get("/selected/../plugins/StaticContentTest.kt").let { response ->
+            assertFalse(response.status.isSuccess())
         }
 
         // can serve select file from other dir
-        handleRequest(HttpMethod.Get, "/selected/sessions/SessionTestJvm.kt").let { result ->
-            assertEquals(HttpStatusCode.OK, result.response.status())
+        client.get("/selected/sessions/SessionTestJvm.kt").let { response ->
+            assertEquals(HttpStatusCode.OK, response.status)
         }
         // can't serve file from other dir that was not published explicitly
-        handleRequest(HttpMethod.Get, "/selected/sessions/AutoSerializerTest.kt").let { result ->
-            assertFalse(result.response.status()!!.isSuccess())
+        client.get("/selected/sessions/AutoSerializerTest.kt").let { response ->
+            assertFalse(response.status.isSuccess())
         }
         // can't serve dir itself
-        handleRequest(HttpMethod.Get, "/selected/sessions").let { result ->
-            assertFalse(result.response.status()!!.isSuccess())
+        client.get("/selected/sessions").let { response ->
+            assertFalse(response.status.isSuccess())
         }
         // can serve file from virtual folder with a renamed file
-        handleRequest(HttpMethod.Get, "/selected/virtual/foobar.kt").let { result ->
-            assertEquals(HttpStatusCode.OK, result.response.status())
+        client.get("/selected/virtual/foobar.kt").let { response ->
+            assertEquals(HttpStatusCode.OK, response.status)
         }
         // can serve dir itself if default was given
-        handleRequest(HttpMethod.Get, "/selected/virtual").let { result ->
-            assertEquals(HttpStatusCode.OK, result.response.status())
+        client.get("/selected/virtual").let { response ->
+            assertEquals(HttpStatusCode.OK, response.status)
         }
         // can serve mapped file from root folder
-        handleRequest(HttpMethod.Get, "/foobar.kt").let { result ->
-            assertEquals(HttpStatusCode.OK, result.response.status())
+        client.get("/foobar.kt").let { response ->
+            assertEquals(HttpStatusCode.OK, response.status)
         }
     }
 
     @Test
-    fun testStaticContent() = withTestApplication {
-        application.install(ConditionalHeaders)
-        application.install(PartialContent)
-        application.install(AutoHeadResponse)
+    @Suppress("DEPRECATION")
+    fun testLegacy() = testApplication {
+        install(ConditionalHeaders)
+        install(PartialContent)
+        install(AutoHeadResponse)
 
-        application.routing {
+        routing {
             static {
                 resources("io.ktor.server.plugins")
                 resources("java.util")
@@ -112,21 +159,21 @@ class StaticContentTest {
             }
         }
 
-        handleRequest(HttpMethod.Get, "/StaticContentTest.class").let { result ->
-            assertEquals(HttpStatusCode.OK, result.response.status())
+        client.get("/StaticContentTest.class").let { response ->
+            assertEquals(HttpStatusCode.OK, response.status)
         }
 
-        handleRequest(HttpMethod.Get, "/ArrayList.class")
-        handleRequest(HttpMethod.Get, "/z/ArrayList.class")
-        handleRequest(HttpMethod.Get, "/ArrayList.class2")
+        client.get("/ArrayList.class")
+        client.get("/z/ArrayList.class")
+        client.get("/ArrayList.class2")
 
-        handleRequest(HttpMethod.Get, "/plugins/StaticContentTest.kt").let { result ->
-            assertEquals(HttpStatusCode.OK, result.response.status())
-            assertEquals(RangeUnits.Bytes.unitToken, result.response.headers[HttpHeaders.AcceptRanges])
-            assertNotNull(result.response.headers[HttpHeaders.LastModified])
+        client.get("/plugins/StaticContentTest.kt").let { response ->
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(RangeUnits.Bytes.unitToken, response.headers[HttpHeaders.AcceptRanges])
+            assertNotNull(response.headers[HttpHeaders.LastModified])
         }
-        handleRequest(HttpMethod.Get, "/f/plugins/StaticContentTest.kt").let { result ->
-            assertTrue(result.response.status()!!.isSuccess())
+        client.get("/f/plugins/StaticContentTest.kt").let { response ->
+            assertTrue(response.status.isSuccess())
         }
     }
 
@@ -135,7 +182,7 @@ class StaticContentTest {
     }
 
     @Test
-    fun testStaticFiles() = testApplication {
+    fun testFiles() = testApplication {
         routing {
             staticFiles("static", basedir, "/plugins/StaticContentTest.kt") {
                 cacheControl {
@@ -157,23 +204,23 @@ class StaticContentTest {
 
         val responseDefault = client.get("static")
         assertEquals(HttpStatusCode.OK, responseDefault.status)
-        assertTrue(responseDefault.bodyAsText().contains("class StaticContentTest {"))
+        assertContains(responseDefault.bodyAsText(), "class StaticContentTest {")
 
         val responseCustom = client.get("static/plugins/PartialContentTest.kt")
         assertEquals(HttpStatusCode.OK, responseCustom.status)
-        assertTrue(responseCustom.bodyAsText().contains("class PartialContentTest {"))
+        assertContains(responseCustom.bodyAsText(), "class PartialContentTest {")
         assertEquals(ContentType.Application.Json, responseCustom.contentType())
         assertEquals("immutable, max-age=1", responseCustom.headers[HttpHeaders.CacheControl])
 
         val responseFile = client.get("static/plugins/CookiesTest.kt")
         assertEquals(HttpStatusCode.OK, responseFile.status)
-        assertTrue(responseFile.bodyAsText().contains("class CookiesTest {"))
+        assertContains(responseFile.bodyAsText(), "class CookiesTest {")
         assertEquals(ContentType.Application.OctetStream, responseFile.contentType())
         assertNull(responseFile.headers[HttpHeaders.CacheControl])
 
         val notFound = client.get("static/not-existing")
         assertEquals(HttpStatusCode.OK, notFound.status)
-        assertTrue(notFound.bodyAsText().contains("class AutoHeadResponseJvmTest {"))
+        assertContains(notFound.bodyAsText(), "class AutoHeadResponseJvmTest {")
 
         val noIndex = client.get("static_no_index")
         assertEquals(HttpStatusCode.NotFound, noIndex.status)
@@ -185,53 +232,161 @@ class StaticContentTest {
     }
 
     @Test
-    fun testStaticFilesExtensions() = testApplication {
-        routing {
-            staticFiles("static", basedir) {
-                extensions("kt")
+    fun testFallback() = testApplication {
+        fun <T : Any> StaticContentConfig<T>.setFallback(remotePath: String, path: String, file: String) {
+            fallback { requestedPath, call ->
+                if (requestedPath.endsWith(".pdf")) {
+                    call.respondRedirect("/$remotePath/$path/$file")
+                } else if (requestedPath.endsWith(".zip")) {
+                    call.respondRedirect(file)
+                }
             }
         }
 
-        val responseFile = client.get("static/plugins/CookiesTest.kt")
-        assertEquals(HttpStatusCode.OK, responseFile.status)
-        assertTrue(responseFile.bodyAsText().contains("class CookiesTest {"))
-        assertEquals(ContentType.Application.OctetStream, responseFile.contentType())
-        assertNull(responseFile.headers[HttpHeaders.CacheControl])
+        routing {
+            staticFiles("staticFiles", basedir) {
+                setFallback("staticFiles", "plugins", "PartialContentTest.kt")
+            }
+            staticResources("staticResources", "public") {
+                setFallback("staticResources", "nested", "file-nested.txt")
+            }
+            staticFileSystem("staticFileSystem", "jvm/test-resources/public") {
+                setFallback("staticFileSystem", "nested", "file-nested.txt")
+            }
 
-        val responseFileNoExtension = client.get("static/plugins/CookiesTest")
-        assertEquals(HttpStatusCode.OK, responseFileNoExtension.status)
-        assertTrue(responseFileNoExtension.bodyAsText().contains("class CookiesTest {"))
-        assertEquals(ContentType.Application.OctetStream, responseFileNoExtension.contentType())
-        assertNull(responseFileNoExtension.headers[HttpHeaders.CacheControl])
+            staticFiles("staticFilesWithValidDefault", basedir) {
+                default("/plugins/PartialContentTest.kt")
+                fallback { _, _ ->
+                    error("This should not be called because valid default is set")
+                }
+            }
+            staticFiles("staticFilesWithInvalidDefault", basedir) {
+                default("invalid-file.kt")
+                fallback { _, call ->
+                    call.respondRedirect("/staticFilesWithInvalidDefault/http/ApplicationRequestContentTestJvm.kt")
+                }
+            }
+        }
+
+        suspend fun testFallback(
+            remotePath: String,
+            path: String,
+            file: String,
+            body: String
+        ) {
+            val noFallback = client.get("$remotePath/$path/$file")
+            assertEquals(HttpStatusCode.OK, noFallback.status)
+            assertContains(noFallback.bodyAsText(), body)
+
+            val fallbackPdf = client.get("$remotePath/NoSuchFile.pdf")
+            assertEquals(HttpStatusCode.OK, fallbackPdf.status)
+            assertContains(fallbackPdf.bodyAsText(), body)
+
+            val fallbackZip = client.get("$remotePath/$path/NoSuchFile.zip")
+            assertEquals(HttpStatusCode.OK, fallbackZip.status)
+            assertContains(fallbackZip.bodyAsText(), body)
+
+            assertEquals(HttpStatusCode.NotFound, client.get("$remotePath/NoSuchFile").status)
+        }
+
+        testFallback("staticFiles", "plugins", "PartialContentTest.kt", "class PartialContentTest {")
+        testFallback("staticResources", "nested", "file-nested.txt", "file-nested.txt")
+        testFallback("staticFileSystem", "nested", "file-nested.txt", "file-nested.txt")
+
+        val validDefault = client.get("staticFilesWithValidDefault/plugins/default.kt")
+        assertEquals(HttpStatusCode.OK, validDefault.status)
+        assertContains(validDefault.bodyAsText(), "class PartialContentTest {")
+
+        val invalidDefault = client.get("staticFilesWithInvalidDefault/plugins/default.kt")
+        assertEquals(HttpStatusCode.OK, invalidDefault.status)
+        assertContains(invalidDefault.bodyAsText(), "class ApplicationRequestContentTest {")
     }
 
     @Test
-    fun testStaticFilesExclude() = testApplication {
+    fun testExtensions() = testApplication {
         routing {
-            staticFiles("static", basedir, "/plugins/StaticContentTest.kt") {
+            staticFiles("staticFiles", basedir) {
+                extensions("kt")
+            }
+            staticFileSystem("staticFileSystem", "jvm/test-resources/public") {
+                extensions("txt")
+            }
+            staticResources("staticResources", "public") {
+                extensions("txt")
+            }
+        }
+
+        suspend fun testExtensions(path: String, expected: String) {
+            val responseFile = client.get(path)
+            assertEquals(HttpStatusCode.OK, responseFile.status)
+            assertContains(responseFile.bodyAsText().trim(), expected)
+            assertNull(responseFile.headers[HttpHeaders.CacheControl])
+
+            val responseFileNoExtension = client.get(path.substringBeforeLast('.'))
+            assertEquals(HttpStatusCode.OK, responseFileNoExtension.status)
+            assertContains(responseFileNoExtension.bodyAsText().trim(), expected)
+            assertNull(responseFileNoExtension.headers[HttpHeaders.CacheControl])
+        }
+
+        testExtensions("staticFiles/plugins/CookiesTest.kt", "class CookiesTest {")
+        testExtensions("staticFileSystem/file.txt", "file.txt")
+        testExtensions("staticResources/file.txt", "file.txt")
+    }
+
+    @Test
+    fun testExclude() = testApplication {
+        routing {
+            staticFiles("staticFiles", basedir, "CookiesTest.kt") {
                 exclude { it.path.contains("CookiesTest") }
                 exclude { it.path.contains("PartialContentTest") }
                 extensions("kt")
             }
+            staticFileSystem("staticFileSystem", "jvm/test-resources/public", "index.txt") {
+                exclude { it.pathString.contains("ignore") }
+                exclude { it.pathString.contains("secret") }
+                extensions("secret.txt", "txt")
+            }
+            staticResources("staticResources", "public", "index.txt") {
+                exclude { it.path.contains("ignore") }
+                exclude { it.path.contains("secret") }
+                extensions("secret.txt", "txt")
+            }
         }
 
-        val responseFileNoIgnore = client.get("static/plugins/CompressionTest.kt")
-        assertEquals(HttpStatusCode.OK, responseFileNoIgnore.status)
-        assertTrue(responseFileNoIgnore.bodyAsText().contains("class CompressionTest {"))
+        suspend fun testExclude(
+            path: String,
+            expectedStatus: HttpStatusCode,
+            expectedBody: String? = null
+        ) {
+            val response = client.get(path)
+            assertEquals(expectedStatus, response.status)
 
-        val responseFile = client.get("static/plugins/CookiesTest.kt")
-        assertEquals(HttpStatusCode.Forbidden, responseFile.status)
+            if (expectedBody != null) {
+                assertContains(response.bodyAsText(), expectedBody)
+            }
+        }
 
-        val responseFileOther = client.get("static/plugins/PartialContentTest.kt")
-        assertEquals(HttpStatusCode.Forbidden, responseFileOther.status)
+        testExclude("staticFiles/plugins/CompressionTest.kt", HttpStatusCode.OK, "class CompressionTest {")
+        testExclude("staticFiles/plugins/CookiesTest.kt", HttpStatusCode.Forbidden)
+        testExclude("staticFiles/plugins/PartialContentTest.kt", HttpStatusCode.Forbidden)
+        testExclude("staticFiles/plugins/CookiesTest", HttpStatusCode.Forbidden)
+        testExclude("staticFiles/plugins/", HttpStatusCode.Forbidden)
 
-        val responseFileNoExtension = client.get("static/plugins/CookiesTest")
-        assertEquals(HttpStatusCode.Forbidden, responseFileNoExtension.status)
+        testExclude("staticFileSystem/file.txt", HttpStatusCode.OK, "file.txt")
+        testExclude("staticFileSystem/has-fallback", HttpStatusCode.OK, "has-fallback.txt")
+        testExclude("staticFileSystem/ignore.txt", HttpStatusCode.Forbidden)
+        testExclude("staticFileSystem/ignore", HttpStatusCode.Forbidden)
+        testExclude("staticFileSystem/ignored/", HttpStatusCode.Forbidden)
+
+        testExclude("staticResources/file.txt", HttpStatusCode.OK, "file.txt")
+        testExclude("staticResources/has-fallback", HttpStatusCode.OK, "has-fallback.txt")
+        testExclude("staticResources/ignore.txt", HttpStatusCode.Forbidden)
+        testExclude("staticResources/ignore", HttpStatusCode.Forbidden)
+        testExclude("staticResources/ignored/", HttpStatusCode.Forbidden)
     }
 
     @Test
-    fun testStaticFilesPreCompressed() = testApplication {
-        val filesDir = Files.createTempDirectory("assets").toFile()
+    fun testPreCompressed(@TempDir filesDir: File) = testApplication {
         val tempFile = File(filesDir, "testServeEncodedFile.txt")
         val brFile = File(filesDir, "testServeEncodedFile.txt.br")
         val gzFile = File(filesDir, "testServeEncodedFile.txt.gz")
@@ -244,115 +399,199 @@ class StaticContentTest {
         gzOnlyFileGz.writeText("gzOnly.txt.gz")
 
         routing {
-            staticFiles("static", filesDir) {
+            staticFiles("staticFiles", filesDir) {
+                contentType { ContentType.Text.Plain }
+                preCompressed(CompressedFileType.BROTLI, CompressedFileType.GZIP)
+            }
+
+            staticFileSystem("staticFileSystem", "jvm/test-resources/public") {
+                contentType { ContentType.Text.Plain }
+                preCompressed(CompressedFileType.BROTLI, CompressedFileType.GZIP)
+            }
+
+            staticResources("staticResources", "public") {
+                contentType { ContentType.Text.Plain }
                 preCompressed(CompressedFileType.BROTLI, CompressedFileType.GZIP)
             }
         }
 
-        val responseFile = client.get("static/testServeEncodedFile.txt")
-        assertEquals(HttpStatusCode.OK, responseFile.status)
-        assertEquals("temp", responseFile.bodyAsText())
-        assertEquals(ContentType.Text.Plain, responseFile.contentType()!!.withoutParameters())
-
-        val responseFileBr = client.get("static/testServeEncodedFile.txt") {
-            header(HttpHeaders.AcceptEncoding, "br")
+        suspend fun testPreCompressed(
+            path: String,
+            content: String,
+            type: CompressedFileType?,
+            expectEncodedResponse: Boolean = true,
+        ) {
+            val response = client.get(path) {
+                if (type != null) {
+                    header(HttpHeaders.AcceptEncoding, type.encoding)
+                }
+            }
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(content, response.bodyAsText().trim())
+            if (type != null && expectEncodedResponse) {
+                assertEquals(type.encoding, response.headers[HttpHeaders.ContentEncoding])
+            }
+            assertEquals(ContentType.Text.Plain, response.contentType()!!.withoutParameters())
         }
-        assertEquals(HttpStatusCode.OK, responseFileBr.status)
-        assertEquals("temp.br", responseFileBr.bodyAsText())
-        assertEquals("br", responseFileBr.headers[HttpHeaders.ContentEncoding])
-        assertEquals(ContentType.Text.Plain, responseFile.contentType()!!.withoutParameters())
 
-        val responseFileGz = client.get("static/testServeEncodedFile.txt") {
-            header(HttpHeaders.AcceptEncoding, "gzip")
-        }
-        assertEquals(HttpStatusCode.OK, responseFileGz.status)
-        assertEquals("temp.gz", responseFileGz.bodyAsText())
-        assertEquals("gzip", responseFileGz.headers[HttpHeaders.ContentEncoding])
-        assertEquals(ContentType.Text.Plain, responseFileGz.contentType()!!.withoutParameters())
+        testPreCompressed("staticFiles/testServeEncodedFile.txt", "temp", null)
+        testPreCompressed("staticFiles/testServeEncodedFile.txt", "temp.br", CompressedFileType.BROTLI)
+        testPreCompressed("staticFiles/testServeEncodedFile.txt", "temp.gz", CompressedFileType.GZIP)
+        testPreCompressed("staticFiles/gzOnly.txt", "gzOnly.txt.gz", CompressedFileType.GZIP)
+        testPreCompressed("staticFiles/gzOnly.txt", "gzOnly.txt", CompressedFileType.BROTLI, false)
 
-        val responseFileGzOnly = client.get("static/gzOnly.txt") {
-            header(HttpHeaders.AcceptEncoding, "gzip")
-        }
-        assertEquals(HttpStatusCode.OK, responseFileGzOnly.status)
-        assertEquals("gzOnly.txt.gz", responseFileGzOnly.bodyAsText())
-        assertEquals("gzip", responseFileGzOnly.headers[HttpHeaders.ContentEncoding])
-        assertEquals(ContentType.Text.Plain, responseFileGzOnly.contentType()!!.withoutParameters())
+        testPreCompressed("staticFileSystem", "index", null)
+        testPreCompressed("staticFileSystem", "index.gz", CompressedFileType.GZIP)
+        testPreCompressed("staticFileSystem", "index.br", CompressedFileType.BROTLI)
+        testPreCompressed("staticFileSystem/nested/file-nested.txt", "file-nested.txt", null)
+        testPreCompressed("staticFileSystem/nested/file-nested.txt", "file-nested.txt.br", CompressedFileType.BROTLI)
+        testPreCompressed("staticFileSystem/nested/file-nested.txt", "file-nested.txt", CompressedFileType.GZIP, false)
 
-        val responseFileGzOnlyBr = client.get("static/gzOnly.txt") {
-            header(HttpHeaders.AcceptEncoding, "br")
-        }
-        assertEquals(HttpStatusCode.OK, responseFileGzOnlyBr.status)
-        assertEquals("gzOnly.txt", responseFileGzOnlyBr.bodyAsText())
-        assertEquals(ContentType.Text.Plain, responseFileGzOnlyBr.contentType()!!.withoutParameters())
+        testPreCompressed("staticResources", "index", null)
+        testPreCompressed("staticResources", "index.gz", CompressedFileType.GZIP)
+        testPreCompressed("staticResources", "index.br", CompressedFileType.BROTLI)
+        testPreCompressed("staticResources/nested/file-nested.txt", "file-nested.txt", null)
+        testPreCompressed("staticResources/nested/file-nested.txt", "file-nested.txt.br", CompressedFileType.BROTLI)
+        testPreCompressed("staticResources/nested/file-nested.txt", "file-nested.txt", CompressedFileType.GZIP, false)
     }
 
     @Test
-    fun testStaticFilesAutoHead() = testApplication {
+    fun testAutoHead() = testApplication {
         routing {
-            staticFiles("static", basedir, "/plugins/StaticContentTest.kt") {
+            staticFiles("staticFiles", basedir, "/plugins/StaticContentTest.kt") {
+                enableAutoHeadResponse()
+            }
+
+            staticFileSystem("staticFileSystem", "jvm/test-resources/public") {
+                enableAutoHeadResponse()
+            }
+            staticResources("staticResources", "public") {
                 enableAutoHeadResponse()
             }
         }
 
-        val responseDefault = client.get("static")
-        assertEquals(HttpStatusCode.OK, responseDefault.status)
-        assertTrue(responseDefault.bodyAsText().contains("class StaticContentTest {"))
+        suspend fun testHeadResponse(path: String) {
+            val response = client.head(path)
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertTrue(response.bodyAsText().isEmpty())
+            assertTrue(response.contentLength()!! > 0)
+        }
 
-        val responseDefaultHead = client.head("static")
-        assertEquals(HttpStatusCode.OK, responseDefaultHead.status)
-        assertTrue(responseDefaultHead.bodyAsText().isEmpty())
-        assertTrue(responseDefaultHead.contentLength()!! > 0)
+        val responseFilesIndex = client.get("staticFiles")
+        assertEquals(HttpStatusCode.OK, responseFilesIndex.status)
+        assertContains(responseFilesIndex.bodyAsText(), "class StaticContentTest {")
 
-        val responseFileHead = client.head("static/plugins/CookiesTest.kt")
-        assertEquals(HttpStatusCode.OK, responseFileHead.status)
-        assertTrue(responseFileHead.bodyAsText().isEmpty())
-        assertTrue(responseFileHead.contentLength()!! > 0)
+        testHeadResponse("staticFiles")
+        testHeadResponse("staticFiles/plugins/CookiesTest.kt")
 
-        val notFound = client.head("static/not-existing")
-        assertEquals(HttpStatusCode.NotFound, notFound.status)
+        val responseFilesNotFound = client.head("staticFiles/not-existing")
+        assertEquals(HttpStatusCode.NotFound, responseFilesNotFound.status)
+
+        val responsePathIndex = client.get("staticFileSystem")
+        assertEquals(HttpStatusCode.OK, responsePathIndex.status)
+        assertEquals("index", responsePathIndex.bodyAsText().trim())
+        assertEquals(ContentType.Text.Html, responsePathIndex.contentType()!!.withoutParameters())
+
+        testHeadResponse("staticFileSystem")
+        testHeadResponse("staticFileSystem/file.txt")
+
+        val responsePathNotFound = client.head("staticFileSystem/not-existing")
+        assertEquals(HttpStatusCode.NotFound, responsePathNotFound.status)
+
+        val responseResourcesIndex = client.get("staticResources")
+        assertEquals(HttpStatusCode.OK, responseResourcesIndex.status)
+        assertEquals("index", responseResourcesIndex.bodyAsText().trim())
+        assertEquals(ContentType.Text.Html, responseResourcesIndex.contentType()!!.withoutParameters())
+
+        testHeadResponse("staticResources")
+        testHeadResponse("staticResources/file.txt")
+
+        val responseResourcesNotFound = client.head("staticResources/not-existing")
+        assertEquals(HttpStatusCode.NotFound, responseResourcesNotFound.status)
     }
 
     @Test
-    fun testStaticFilesModifier() = testApplication {
+    fun testModifier() = testApplication {
         routing {
-            staticFiles("static", basedir, "/plugins/StaticContentTest.kt") {
+            staticFiles("staticFiles", basedir, "/plugins/StaticContentTest.kt") {
                 modify { url, call ->
-                    call.response.headers.append(HttpHeaders.ETag, url.path.substringAfterLast(File.separatorChar))
+                    call.response.headers.append(HttpHeaders.ETag, url.name)
+                }
+            }
+
+            staticFileSystem("staticFileSystem", "jvm/test-resources/public") {
+                modify { path, call ->
+                    call.response.headers.append(HttpHeaders.ETag, path.fileName.toString())
+                }
+            }
+
+            staticResources("staticResources", "public") {
+                modify { url, call ->
+                    call.response.headers.append(HttpHeaders.ETag, url.path.substringAfterLast('/'))
                 }
             }
         }
 
-        val responseDefault = client.get("static")
-        assertEquals(HttpStatusCode.OK, responseDefault.status)
-        assertEquals("StaticContentTest.kt", responseDefault.headers[HttpHeaders.ETag])
+        suspend fun testEtag(path: String, content: String) {
+            val response = client.get(path)
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(content, response.headers[HttpHeaders.ETag])
+        }
 
-        val responseFile = client.get("static/plugins/CookiesTest.kt")
-        assertEquals(HttpStatusCode.OK, responseFile.status)
-        assertEquals("CookiesTest.kt", responseFile.headers[HttpHeaders.ETag])
+        testEtag("staticFiles", "StaticContentTest.kt")
+        testEtag("staticFiles/plugins/CookiesTest.kt", "CookiesTest.kt")
+
+        testEtag("staticFileSystem", "index.html")
+        testEtag("staticFileSystem/file.txt", "file.txt")
+
+        testEtag("staticResources", "index.html")
+        testEtag("staticResources/file.txt", "file.txt")
     }
 
     @Test
-    fun testStaticFilesWithIndexAndDefault() = testApplication {
+    fun testWithIndexAndDefault() = testApplication {
         var respondCount = 0
         install(
             createApplicationPlugin("test") {
                 onCallRespond { _ -> respondCount++ }
             }
         )
+
         routing {
-            staticFiles("static", basedir, "/plugins/StaticContentTest.kt") {
-                default("/plugins/PartialContentTest.kt")
+            staticFiles("staticFiles", File("jvm/test-resources/public"), "file.txt") {
+                default("default.txt")
+            }
+
+            staticFileSystem("staticFileSystem", "jvm/test-resources/public", "file.txt") {
+                default("default.txt")
+            }
+
+            staticResources("staticResources", "public", "file.txt") {
+                default("default.txt")
             }
         }
 
-        val response = client.get("static")
-        assertEquals(HttpStatusCode.OK, response.status)
-        assertTrue(response.bodyAsText().contains("class StaticContentTest {"))
-        assertEquals(1, respondCount)
+        suspend fun testIndexAndDefault(path: String, expected: String) {
+            respondCount = 0
+            val response = client.get(path)
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertContains(response.bodyAsText(), expected)
+            assertEquals(1, respondCount)
+        }
+
+        testIndexAndDefault("staticFiles", "file.txt")
+        testIndexAndDefault("staticFiles/not-existing", "default")
+
+        testIndexAndDefault("staticFileSystem", "file.txt")
+        testIndexAndDefault("staticFileSystem/not-existing", "default")
+
+        testIndexAndDefault("staticResources", "file.txt")
+        testIndexAndDefault("staticResources/not-existing", "default")
     }
 
     @Test
-    fun testStaticPath() = testApplication {
+    fun testPath() = testApplication {
         routing {
             staticFileSystem("static", "jvm/test-resources/public") {
                 cacheControl {
@@ -370,7 +609,7 @@ class StaticContentTest {
                 default("default.txt")
             }
             staticFileSystem("static_no_index", "jvm/test-resources/public", null)
-            staticFileSystem("static_no_base_path", null)
+            staticFileSystem("static_no_base_path", basePath = null)
         }
 
         val responseIndex = client.get("static")
@@ -414,131 +653,7 @@ class StaticContentTest {
     }
 
     @Test
-    fun testStaticPathExtensions() = testApplication {
-        routing {
-            staticFileSystem("static", "jvm/test-resources/public") {
-                extensions("txt")
-            }
-        }
-
-        val responseFile = client.get("static/file.txt")
-        assertEquals(HttpStatusCode.OK, responseFile.status)
-        assertEquals("file.txt", responseFile.bodyAsText().trim())
-        assertEquals(ContentType.Text.Plain, responseFile.contentType()!!.withoutParameters())
-        assertNull(responseFile.headers[HttpHeaders.CacheControl])
-
-        val responseFileNoExtension = client.get("static/file")
-        assertEquals(HttpStatusCode.OK, responseFileNoExtension.status)
-        assertEquals("file.txt", responseFileNoExtension.bodyAsText().trim())
-        assertEquals(ContentType.Text.Plain, responseFileNoExtension.contentType()!!.withoutParameters())
-        assertNull(responseFileNoExtension.headers[HttpHeaders.CacheControl])
-    }
-
-    @Test
-    fun testStaticPathExclude() = testApplication {
-        routing {
-            staticFileSystem("static", "jvm/test-resources/public") {
-                exclude { it.pathString.contains("ignore") }
-                extensions("txt")
-            }
-        }
-
-        val responseFile = client.get("static/file.txt")
-        assertEquals(HttpStatusCode.OK, responseFile.status)
-        assertEquals("file.txt", responseFile.bodyAsText().trim())
-        assertEquals(ContentType.Text.Plain, responseFile.contentType()!!.withoutParameters())
-        assertNull(responseFile.headers[HttpHeaders.CacheControl])
-
-        val responseIgnoreFile = client.get("static/ignore.txt")
-        assertEquals(HttpStatusCode.Forbidden, responseIgnoreFile.status)
-
-        val responseIgnoreFileNoExtension = client.get("static/ignore")
-        assertEquals(HttpStatusCode.Forbidden, responseIgnoreFileNoExtension.status)
-    }
-
-    @Test
-    fun testStaticPathModifier() = testApplication {
-        routing {
-            staticFileSystem("static", "jvm/test-resources/public") {
-                modify { path, call ->
-                    call.response.headers.append(HttpHeaders.ETag, path.fileName.toString())
-                }
-            }
-        }
-
-        val responseIndex = client.get("static")
-        assertEquals(HttpStatusCode.OK, responseIndex.status)
-        assertEquals("index.html", responseIndex.headers[HttpHeaders.ETag])
-
-        val responseFile = client.get("static/file.txt")
-        assertEquals(HttpStatusCode.OK, responseFile.status)
-        assertEquals("file.txt", responseFile.headers[HttpHeaders.ETag])
-    }
-
-    @Test
-    fun testStaticPathAutoHead() = testApplication {
-        routing {
-            staticFileSystem("static", "jvm/test-resources/public") {
-                enableAutoHeadResponse()
-            }
-        }
-
-        val responseIndex = client.get("static")
-        assertEquals(HttpStatusCode.OK, responseIndex.status)
-        assertEquals("index", responseIndex.bodyAsText().trim())
-        assertEquals(ContentType.Text.Html, responseIndex.contentType()!!.withoutParameters())
-
-        val responseIndexHead = client.head("static")
-        assertEquals(HttpStatusCode.OK, responseIndexHead.status)
-        assertTrue(responseIndexHead.bodyAsText().isEmpty())
-        assertTrue(responseIndexHead.contentLength()!! > 0)
-
-        val responseFileHead = client.head("static/file.txt")
-        assertEquals(HttpStatusCode.OK, responseFileHead.status)
-        assertTrue(responseFileHead.bodyAsText().isEmpty())
-        assertTrue(responseFileHead.contentLength()!! > 0)
-
-        val notFoundHead = client.head("static/not-existing")
-        assertEquals(HttpStatusCode.NotFound, notFoundHead.status)
-    }
-
-    @Test
-    fun testStaticPathPreCompressed() = testApplication {
-        routing {
-            staticFileSystem("static", "jvm/test-resources/public") {
-                preCompressed(CompressedFileType.BROTLI, CompressedFileType.GZIP)
-            }
-        }
-
-        val responseIndex = client.get("static")
-        assertEquals(HttpStatusCode.OK, responseIndex.status)
-        assertEquals("index", responseIndex.bodyAsText().trim())
-        assertEquals(ContentType.Text.Html, responseIndex.contentType()!!.withoutParameters())
-
-        val responseIndexCompressed = client.get("static") {
-            header(HttpHeaders.AcceptEncoding, "gzip")
-        }
-        assertEquals(HttpStatusCode.OK, responseIndexCompressed.status)
-        assertEquals("index.gz", responseIndexCompressed.bodyAsText().trim())
-        assertEquals(ContentType.Text.Html, responseIndexCompressed.contentType()!!.withoutParameters())
-        assertEquals("gzip", responseIndexCompressed.headers[HttpHeaders.ContentEncoding])
-
-        val responseResource = client.get("static/nested/file-nested.txt")
-        assertEquals(HttpStatusCode.OK, responseResource.status)
-        assertEquals("file-nested.txt", responseResource.bodyAsText().trim())
-        assertEquals(ContentType.Text.Plain, responseResource.contentType()!!.withoutParameters())
-
-        val responseResourceCompressed = client.get("static/nested/file-nested.txt") {
-            header(HttpHeaders.AcceptEncoding, "br")
-        }
-        assertEquals(HttpStatusCode.OK, responseResourceCompressed.status)
-        assertEquals("file-nested.txt.br", responseResourceCompressed.bodyAsText().trim())
-        assertEquals(ContentType.Text.Plain, responseResourceCompressed.contentType()!!.withoutParameters())
-        assertEquals("br", responseResourceCompressed.headers[HttpHeaders.ContentEncoding])
-    }
-
-    @Test
-    fun testStaticPathFromZip() = testApplication {
+    fun testPathFromZip() = testApplication {
         routing {
             staticZip(
                 remotePath = "static",
@@ -570,7 +685,7 @@ class StaticContentTest {
     }
 
     @Test
-    fun testStaticResources() = testApplication {
+    fun testResources() = testApplication {
         routing {
             staticResources("static", "public") {
                 cacheControl {
@@ -624,147 +739,27 @@ class StaticContentTest {
     }
 
     @Test
-    fun testStaticResourcesExtensions() = testApplication {
-        routing {
-            staticResources("static", "public") {
-                extensions("txt")
-            }
-        }
-
-        val responseFile = client.get("static/file.txt")
-        assertEquals(HttpStatusCode.OK, responseFile.status)
-        assertEquals("file.txt", responseFile.bodyAsText().trim())
-        assertEquals(ContentType.Text.Plain, responseFile.contentType()!!.withoutParameters())
-        assertNull(responseFile.headers[HttpHeaders.CacheControl])
-
-        val responseFileNoExtension = client.get("static/file")
-        assertEquals(HttpStatusCode.OK, responseFileNoExtension.status)
-        assertEquals("file.txt", responseFileNoExtension.bodyAsText().trim())
-        assertEquals(ContentType.Text.Plain, responseFileNoExtension.contentType()!!.withoutParameters())
-        assertNull(responseFileNoExtension.headers[HttpHeaders.CacheControl])
-    }
-
-    @Test
-    fun testStaticResourcesExclude() = testApplication {
-        routing {
-            staticResources("static", "public") {
-                exclude { it.path.contains("ignore") }
-                extensions("txt")
-            }
-        }
-
-        val responseFile = client.get("static/file.txt")
-        assertEquals(HttpStatusCode.OK, responseFile.status)
-        assertEquals("file.txt", responseFile.bodyAsText().trim())
-        assertEquals(ContentType.Text.Plain, responseFile.contentType()!!.withoutParameters())
-        assertNull(responseFile.headers[HttpHeaders.CacheControl])
-
-        val responseIgnoreFile = client.get("static/ignore.txt")
-        assertEquals(HttpStatusCode.Forbidden, responseIgnoreFile.status)
-
-        val responseIgnoreFileNoExtension = client.get("static/ignore")
-        assertEquals(HttpStatusCode.Forbidden, responseIgnoreFileNoExtension.status)
-    }
-
-    @Test
-    fun testStaticResourcesModifier() = testApplication {
-        routing {
-            staticResources("static", "public") {
-                modify { url, call -> call.response.headers.append(HttpHeaders.ETag, url.path.substringAfterLast('/')) }
-            }
-        }
-
-        val responseIndex = client.get("static")
-        assertEquals(HttpStatusCode.OK, responseIndex.status)
-        assertEquals("index.html", responseIndex.headers[HttpHeaders.ETag])
-
-        val responseFile = client.get("static/file.txt")
-        assertEquals(HttpStatusCode.OK, responseFile.status)
-        assertEquals("file.txt", responseFile.headers[HttpHeaders.ETag])
-    }
-
-    @Test
-    fun testStaticResourcesAutoHead() = testApplication {
-        routing {
-            staticResources("static", "public") {
-                enableAutoHeadResponse()
-            }
-        }
-
-        val responseIndex = client.get("static")
-        assertEquals(HttpStatusCode.OK, responseIndex.status)
-        assertEquals("index", responseIndex.bodyAsText().trim())
-        assertEquals(ContentType.Text.Html, responseIndex.contentType()!!.withoutParameters())
-
-        val responseIndexHead = client.head("static")
-        assertEquals(HttpStatusCode.OK, responseIndexHead.status)
-        assertTrue(responseIndexHead.bodyAsText().isEmpty())
-        assertTrue(responseIndexHead.contentLength()!! > 0)
-
-        val responseFileHead = client.head("static/file.txt")
-        assertEquals(HttpStatusCode.OK, responseFileHead.status)
-        assertTrue(responseFileHead.bodyAsText().isEmpty())
-        assertTrue(responseFileHead.contentLength()!! > 0)
-
-        val notFoundHead = client.head("static/not-existing")
-        assertEquals(HttpStatusCode.NotFound, notFoundHead.status)
-    }
-
-    @Test
-    fun testStaticResourcesPreCompressed() = testApplication {
-        routing {
-            staticResources("static", "public") {
-                preCompressed(CompressedFileType.BROTLI, CompressedFileType.GZIP)
-            }
-        }
-
-        val responseIndex = client.get("static")
-        assertEquals(HttpStatusCode.OK, responseIndex.status)
-        assertEquals("index", responseIndex.bodyAsText().trim())
-        assertEquals(ContentType.Text.Html, responseIndex.contentType()!!.withoutParameters())
-
-        val responseIndexCompressed = client.get("static") {
-            header(HttpHeaders.AcceptEncoding, "gzip")
-        }
-        assertEquals(HttpStatusCode.OK, responseIndexCompressed.status)
-        assertEquals("index.gz", responseIndexCompressed.bodyAsText().trim())
-        assertEquals(ContentType.Text.Html, responseIndexCompressed.contentType()!!.withoutParameters())
-        assertEquals("gzip", responseIndexCompressed.headers[HttpHeaders.ContentEncoding])
-
-        val responseResource = client.get("static/nested/file-nested.txt")
-        assertEquals(HttpStatusCode.OK, responseResource.status)
-        assertEquals("file-nested.txt", responseResource.bodyAsText().trim())
-        assertEquals(ContentType.Text.Plain, responseResource.contentType()!!.withoutParameters())
-
-        val responseResourceCompressed = client.get("static/nested/file-nested.txt") {
-            header(HttpHeaders.AcceptEncoding, "br")
-        }
-        assertEquals(HttpStatusCode.OK, responseResourceCompressed.status)
-        assertEquals("file-nested.txt.br", responseResourceCompressed.bodyAsText().trim())
-        assertEquals(ContentType.Text.Plain, responseResourceCompressed.contentType()!!.withoutParameters())
-        assertEquals("br", responseResourceCompressed.headers[HttpHeaders.ContentEncoding])
-    }
-
-    @Test
-    fun testNullJarFile() = testApplication {
+    @Suppress("DEPRECATION")
+    fun testLegacyNullJarFile() = testApplication {
         routing {
             static {
                 resources()
             }
         }
 
-        client.get("/").let { result ->
-            assertEquals(result.status, HttpStatusCode.NotFound)
+        client.get("/").let { response ->
+            assertEquals(response.status, HttpStatusCode.NotFound)
         }
 
-        client.get("../build.gradle").let { result ->
-            assertEquals(result.status, HttpStatusCode.BadRequest)
+        client.get("../build.gradle").let { response ->
+            assertEquals(response.status, HttpStatusCode.BadRequest)
         }
     }
 
     @Test
-    fun testStaticContentWrongPath() = withTestApplication {
-        application.routing {
+    @Suppress("DEPRECATION")
+    fun testLegacyBadPath() = testApplication {
+        routing {
             static {
                 files(basedir)
             }
@@ -777,137 +772,145 @@ class StaticContentTest {
             "/../../build.gradle",
             "/./.././../build.gradle"
         ).forEach { path ->
-            handleRequest(HttpMethod.Get, path).let { result ->
-                assertFalse(result.response.status()!!.isSuccess())
+            client.get(path).let { response ->
+                assertFalse(response.status.isSuccess())
             }
         }
     }
 
     @Test
-    fun testServeEncodedFileBr() = withTestApplication {
+    @Suppress("DEPRECATION")
+    fun testLegacyServeEncodedFileBr(@TempDir tempDir: File) = testApplication {
         val ext = "json"
-        val temp = File.createTempFile("testServeEncodedFile", ".$ext.br")
 
-        File(basedir, "plugins/StaticContentTest.kt".replaceSeparators()).copyTo(temp, true)
+        val originalFile = File(basedir, "plugins/StaticContentTest.kt".replaceSeparators())
+        originalFile.copyTo(tempDir.resolve("file.$ext.br"), true)
+        originalFile.copyTo(tempDir.resolve("file.$ext"), true)
 
-        application.routing {
+        routing {
             static {
                 preCompressed {
-                    files(temp.parentFile)
+                    files(tempDir)
                 }
             }
         }
 
-        handleRequest(HttpMethod.Get, "/${temp.nameWithoutExtension}") {
-            addHeader(HttpHeaders.AcceptEncoding, "br, gzip, deflate, identity")
-        }.let { result ->
-            assertEquals(temp.readText(), result.response.content)
-            assertEquals(ContentType.defaultForFileExtension(ext), result.response.contentType())
-            assertEquals("br", result.response.headers[HttpHeaders.ContentEncoding].orEmpty())
+        client.get("/file.$ext") {
+            header(HttpHeaders.AcceptEncoding, "br, gzip, deflate, identity")
+        }.let { response ->
+            assertEquals(originalFile.readText(), response.bodyAsText())
+            assertEquals(ContentType.defaultForFileExtension(ext), response.contentType())
+            assertEquals("br", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
     }
 
     @Test
-    fun testServeEncodedFileGz() = withTestApplication {
+    @Suppress("DEPRECATION")
+    fun testLegacyServeEncodedFileGz(@TempDir tempDir: File) = testApplication {
         val ext = "js"
-        val temp = File.createTempFile("testServeEncodedFile", ".$ext.gz")
 
-        File(basedir, "plugins/StaticContentTest.kt".replaceSeparators()).copyTo(temp, true)
+        val originalFile = File(basedir, "plugins/StaticContentTest.kt".replaceSeparators())
+        originalFile.copyTo(tempDir.resolve("file.$ext.gz"), true)
+        originalFile.copyTo(tempDir.resolve("file.$ext"), true)
 
-        application.routing {
+        routing {
             static {
                 preCompressed {
-                    files(temp.parentFile)
+                    files(tempDir)
                 }
             }
         }
 
-        handleRequest(HttpMethod.Get, "/${temp.nameWithoutExtension}") {
-            addHeader(HttpHeaders.AcceptEncoding, "br, gzip, deflate, identity")
-        }.let { result ->
-            assertEquals(temp.readText(), result.response.content)
-            assertEquals(ContentType.defaultForFileExtension(ext), result.response.contentType())
-            assertEquals("gzip", result.response.headers[HttpHeaders.ContentEncoding].orEmpty())
+        client.get("/file.$ext") {
+            header(HttpHeaders.AcceptEncoding, "br, gzip, deflate, identity")
+        }.let { response ->
+            assertEquals(originalFile.readText(), response.bodyAsText())
+            assertEquals(ContentType.defaultForFileExtension(ext), response.contentType())
+            assertEquals("gzip", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
     }
 
     // a.k.a testServeEncodedFileGzWithCompressionNoRecompress
     @Test
-    fun testSuppressCompressionIfAlreadyCompressed() = withTestApplication {
-        application.install(Compression)
+    @Suppress("DEPRECATION")
+    fun testLegacySuppressCompressionIfAlreadyCompressed(@TempDir tempDir: File) = testApplication {
+        install(Compression)
         val ext = "js"
-        val temp = File.createTempFile("testServeEncodedFile", ".$ext.gz")
 
-        File(basedir, "plugins/StaticContentTest.kt".replaceSeparators()).copyTo(temp, true)
+        val originalFile = File(basedir, "plugins/StaticContentTest.kt".replaceSeparators())
+        originalFile.copyTo(tempDir.resolve("file.$ext.gz"), true)
+        originalFile.copyTo(tempDir.resolve("file.$ext"), true)
 
-        application.routing {
+        routing {
             static {
                 preCompressed {
-                    files(temp.parentFile)
+                    files(tempDir)
                 }
             }
         }
 
-        handleRequest(HttpMethod.Get, "/${temp.nameWithoutExtension}") {
-            addHeader(HttpHeaders.AcceptEncoding, "gzip")
-        }.let { result ->
-            assertEquals(temp.readText(), result.response.content)
-            assertEquals(ContentType.defaultForFileExtension(ext), result.response.contentType())
-            assertEquals("gzip", result.response.headers[HttpHeaders.ContentEncoding].orEmpty())
+        client.get("/file.$ext") {
+            header(HttpHeaders.AcceptEncoding, "gzip")
+        }.let { response ->
+            assertEquals(originalFile.readText(), response.bodyAsText())
+            assertEquals(ContentType.defaultForFileExtension(ext), response.contentType())
+            assertEquals("gzip", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
     }
 
     @Test
-    fun testCompressedTypesOrder() = withTestApplication {
+    @Suppress("DEPRECATION")
+    fun testLegacyCompressedTypesOrder(@TempDir tempDir: File) = testApplication {
         val ext = "js"
         val cType = ContentType.defaultForFileExtension(ext)
 
-        val tempgz = File.createTempFile("testServeEncodedFile", ".$ext.gz")
-        val publicFile = tempgz.nameWithoutExtension
-        File(basedir, "plugins/StaticContentTest.kt".replaceSeparators()).copyTo(tempgz, true)
-        tempgz.copyTo(File(tempgz.parentFile, "$publicFile.br"), true)
+        val originalFile = File(basedir, "plugins/StaticContentTest.kt".replaceSeparators())
+        originalFile.copyTo(tempDir.resolve("file.$ext.br"), true)
+        originalFile.copyTo(tempDir.resolve("file.$ext.gz"), true)
+        originalFile.copyTo(tempDir.resolve("file.$ext"), true)
 
-        application.routing {
+        routing {
             static("firstgz") {
                 preCompressed(CompressedFileType.GZIP, CompressedFileType.BROTLI) {
-                    files(tempgz.parentFile)
+                    files(tempDir)
                 }
             }
             static("firstbr") {
                 preCompressed(CompressedFileType.BROTLI, CompressedFileType.GZIP) {
-                    files(tempgz.parentFile)
+                    files(tempDir)
                 }
             }
         }
 
-        handleRequest(HttpMethod.Get, "/firstgz/$publicFile") {
-            addHeader(HttpHeaders.AcceptEncoding, "gzip, br")
-        }.let { result ->
-            assertEquals(cType, result.response.contentType())
-            assertEquals("gzip", result.response.headers[HttpHeaders.ContentEncoding].orEmpty())
+        client.get("/firstgz/file.$ext") {
+            header(HttpHeaders.AcceptEncoding, "gzip, br")
+        }.let { response ->
+            assertEquals(cType, response.contentType())
+            assertEquals("gzip", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
 
-        handleRequest(HttpMethod.Get, "/firstbr/$publicFile") {
-            addHeader(HttpHeaders.AcceptEncoding, "gzip, br")
-        }.let { result ->
-            assertEquals(cType, result.response.contentType())
-            assertEquals("br", result.response.headers[HttpHeaders.ContentEncoding].orEmpty())
+        client.get("/firstbr/file.$ext") {
+            header(HttpHeaders.AcceptEncoding, "gzip, br")
+        }.let { response ->
+            assertEquals(cType, response.contentType())
+            assertEquals("br", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
     }
 
     @Test
-    fun testPreCompressedConfiguresImperatively() = withTestApplication {
-        val tempFile = File.createTempFile("testServeEncodedFile", ".dummy")
-        val publicFile = tempFile.nameWithoutExtension
-        val gzDir = File(tempFile.parentFile, "js").also { it.mkdirs() }
-        val brDir = File(tempFile.parentFile, "css").also { it.mkdirs() }
+    @Suppress("DEPRECATION")
+    fun testLegacyPreCompressedConfiguresImperatively(@TempDir tempDir: File) = testApplication {
+        val gzDir = File(tempDir, "js").also { it.mkdirs() }
+        val brDir = File(tempDir, "css").also { it.mkdirs() }
 
         File(basedir, "plugins/StaticContentTest.kt".replaceSeparators()).run {
-            copyTo(File(gzDir, "$publicFile.js.gz"), true)
-            copyTo(File(brDir, "$publicFile.css.br"), true)
+            copyTo(File(gzDir, "file.js"), true)
+            copyTo(File(gzDir, "file.js.gz"), true)
+            copyTo(File(brDir, "file.css"), true)
+            copyTo(File(brDir, "file.css.br"), true)
         }
 
-        application.routing {
+        routing {
             static("assets") {
                 preCompressed(CompressedFileType.GZIP) {
                     files(gzDir)
@@ -918,33 +921,34 @@ class StaticContentTest {
             }
         }
 
-        handleRequest(HttpMethod.Get, "/assets/$publicFile.js") {
-            addHeader(HttpHeaders.AcceptEncoding, "gzip, br")
-        }.let { result ->
-            assertEquals(ContentType.defaultForFileExtension("js"), result.response.contentType())
-            assertEquals("gzip", result.response.headers[HttpHeaders.ContentEncoding].orEmpty())
+        client.get("/assets/file.js") {
+            header(HttpHeaders.AcceptEncoding, "gzip, br")
+        }.let { response ->
+            assertEquals(ContentType.defaultForFileExtension("js"), response.contentType())
+            assertEquals("gzip", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
 
-        handleRequest(HttpMethod.Get, "/assets/$publicFile.css") {
-            addHeader(HttpHeaders.AcceptEncoding, "gzip, br")
-        }.let { result ->
-            assertEquals(ContentType.defaultForFileExtension("css"), result.response.contentType())
-            assertEquals("br", result.response.headers[HttpHeaders.ContentEncoding].orEmpty())
+        client.get("/assets/file.css") {
+            header(HttpHeaders.AcceptEncoding, "gzip, br")
+        }.let { response ->
+            assertEquals(ContentType.defaultForFileExtension("css"), response.contentType())
+            assertEquals("br", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
     }
 
     @Test
-    fun testPreCompressedConfiguresNested() = withTestApplication {
-        val tempFile = File.createTempFile("testServeEncodedFile", ".dummy")
-        val publicFile = tempFile.nameWithoutExtension
-        val cssDir = File(tempFile.parentFile, "css").also { it.mkdirs() }
+    @Suppress("DEPRECATION")
+    fun testLegacyPreCompressedConfiguresNested(@TempDir tempDir: File) = testApplication {
+        val cssDir = File(tempDir, "css").also { it.mkdirs() }
 
         File(basedir, "plugins/StaticContentTest.kt".replaceSeparators()).run {
-            copyTo(File(cssDir, "$publicFile.js.gz"), true)
-            copyTo(File(cssDir, "$publicFile.css.br"), true)
+            copyTo(File(cssDir, "file.js"), true)
+            copyTo(File(cssDir, "file.js.gz"), true)
+            copyTo(File(cssDir, "file.css"), true)
+            copyTo(File(cssDir, "file.css.br"), true)
         }
 
-        application.routing {
+        routing {
             static("assets") {
                 preCompressed(CompressedFileType.GZIP) {
                     preCompressed(CompressedFileType.BROTLI) {
@@ -954,155 +958,166 @@ class StaticContentTest {
             }
         }
 
-        handleRequest(HttpMethod.Get, "/assets/$publicFile.js") {
-            addHeader(HttpHeaders.AcceptEncoding, "gzip, br")
-        }.let { result ->
-            assertEquals(ContentType.defaultForFileExtension("js"), result.response.contentType())
-            assertEquals("gzip", result.response.headers[HttpHeaders.ContentEncoding].orEmpty())
+        client.get("/assets/file.js") {
+            header(HttpHeaders.AcceptEncoding, "gzip, br")
+        }.let { response ->
+            assertEquals(ContentType.defaultForFileExtension("js"), response.contentType())
+            assertEquals("gzip", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
 
-        handleRequest(HttpMethod.Get, "/assets/$publicFile.css") {
-            addHeader(HttpHeaders.AcceptEncoding, "gzip, br")
-        }.let { result ->
-            assertEquals(ContentType.defaultForFileExtension("css"), result.response.contentType())
-            assertEquals("br", result.response.headers[HttpHeaders.ContentEncoding].orEmpty())
-        }
-    }
-
-    @Test
-    fun testSendLocalFile() = withTestApplication {
-        application.intercept(ApplicationCallPipeline.Call) {
-            call.respond(
-                LocalFileContent(
-                    basedir,
-                    "/plugins/StaticContentTest.kt".replaceSeparators()
-                )
-            )
-        }
-
-        handleRequest(HttpMethod.Get, "/").let { result ->
-            assertEquals(
-                File(basedir, "plugins/StaticContentTest.kt".replaceSeparators()).readText(),
-                result.response.content
-            )
+        client.get("/assets/file.css") {
+            header(HttpHeaders.AcceptEncoding, "gzip, br")
+        }.let { response ->
+            assertEquals(ContentType.defaultForFileExtension("css"), response.contentType())
+            assertEquals("br", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
     }
 
     @Test
-    fun testSendLocalFilePaths() = withTestApplication {
-        application.intercept(ApplicationCallPipeline.Call) {
-            call.respond(
-                LocalPathContent(
-                    basedir.toPath(),
-                    Paths.get("/plugins/StaticContentTest.kt".replaceSeparators())
-                )
-            )
-        }
-
-        handleRequest(HttpMethod.Get, "/").let { result ->
-            assertEquals(
-                File(basedir, "plugins/StaticContentTest.kt".replaceSeparators()).readText(),
-                result.response.content
-            )
-        }
-    }
-
-    @Test
-    fun testSendLocalFileBadRelative() = withTestApplication {
-        application.intercept(ApplicationCallPipeline.Call) {
-            assertFailsWithSuspended<Exception> {
+    fun testSendLocalFile() = testApplication {
+        application {
+            intercept(ApplicationCallPipeline.Call) {
                 call.respond(
                     LocalFileContent(
                         basedir,
-                        "/../../../../../../../../../../../../../etc/passwd"
+                        "/plugins/StaticContentTest.kt".replaceSeparators()
                     )
                 )
             }
-            assertFailsWithSuspended<Exception> {
-                call.respond(
-                    LocalFileContent(
-                        basedir,
-                        "../../../../../../../../../../../../../etc/passwd"
-                    )
-                )
-            }
-            assertFailsWithSuspended<Exception> {
-                call.respond(LocalPathContent(basedir.toPath(), Paths.get("../build.gradle")))
-            }
-            assertFailsWithSuspended<Exception> {
-                call.respond(LocalPathContent(basedir.toPath(), Paths.get("../../build.gradle")))
-            }
-            assertFailsWithSuspended<Exception> {
-                call.respond(LocalPathContent(basedir.toPath(), Paths.get("/../build.gradle")))
-            }
         }
 
-        handleRequest(HttpMethod.Get, "/").let { result ->
-            assertFalse(result.response.status()!!.isSuccess())
-        }
-    }
-
-    @Test
-    fun testSendLocalFileBadRelativePaths() = withTestApplication {
-        application.intercept(ApplicationCallPipeline.Call) {
-            assertFailsWithSuspended<Exception> {
-                call.respond(
-                    LocalPathContent(
-                        basedir.toPath(),
-                        Paths.get("/../../../../../../../../../../../../../etc/passwd")
-                    )
-                )
-            }
-            assertFailsWithSuspended<Exception> {
-                call.respond(
-                    LocalPathContent(
-                        basedir.toPath(),
-                        Paths.get("../../../../../../../../../../../../../etc/passwd")
-                    )
-                )
-            }
-            assertFailsWithSuspended<Exception> {
-                call.respond(LocalFileContent(basedir, "../build.gradle"))
-            }
-            assertFailsWithSuspended<Exception> {
-                call.respond(LocalFileContent(basedir, "../../build.gradle"))
-            }
-            assertFailsWithSuspended<Exception> {
-                call.respond(LocalFileContent(basedir, "/../build.gradle"))
-            }
-        }
-
-        handleRequest(HttpMethod.Get, "/").let { result ->
-            assertFalse(result.response.status()!!.isSuccess())
-        }
-    }
-
-    @Test
-    fun testInterceptCacheControl() = withTestApplication {
-        application.intercept(ApplicationCallPipeline.Plugins) {
-            if (call.request.httpMethod == HttpMethod.Get ||
-                call.request.httpMethod == HttpMethod.Head
-            ) {
-                call.response.cacheControl(CacheControl.MaxAge(300))
-            }
-        }
-
-        application.intercept(ApplicationCallPipeline.Call) {
-            call.respond(LocalFileContent(File(basedir, "plugins/StaticContentTest.kt")))
-        }
-
-        handleRequest(HttpMethod.Get, "/").let { result ->
+        client.get("/").let { response ->
             assertEquals(
                 File(basedir, "plugins/StaticContentTest.kt".replaceSeparators()).readText(),
-                result.response.content
+                response.bodyAsText()
             )
-            assertEquals(listOf("max-age=300"), result.response.headers.values(HttpHeaders.CacheControl))
         }
     }
 
     @Test
-    fun testStaticContentPriority() = withTestApplication {
-        application.routing {
+    fun testSendLocalFilePaths() = testApplication {
+        application {
+            intercept(ApplicationCallPipeline.Call) {
+                call.respond(
+                    LocalPathContent(
+                        basedir.toPath(),
+                        Paths.get("/plugins/StaticContentTest.kt".replaceSeparators())
+                    )
+                )
+            }
+        }
+
+        client.get("/").let { response ->
+            assertEquals(
+                File(basedir, "plugins/StaticContentTest.kt".replaceSeparators()).readText(),
+                response.bodyAsText()
+            )
+        }
+    }
+
+    @Test
+    fun testSendLocalFileBadRelative() = testApplication {
+        application {
+            intercept(ApplicationCallPipeline.Call) {
+                assertFailsWithSuspended<Exception> {
+                    call.respond(
+                        LocalFileContent(
+                            basedir,
+                            "/../../../../../../../../../../../../../etc/passwd"
+                        )
+                    )
+                }
+                assertFailsWithSuspended<Exception> {
+                    call.respond(
+                        LocalFileContent(
+                            basedir,
+                            "../../../../../../../../../../../../../etc/passwd"
+                        )
+                    )
+                }
+                assertFailsWithSuspended<Exception> {
+                    call.respond(LocalPathContent(basedir.toPath(), Paths.get("../build.gradle")))
+                }
+                assertFailsWithSuspended<Exception> {
+                    call.respond(LocalPathContent(basedir.toPath(), Paths.get("../../build.gradle")))
+                }
+                assertFailsWithSuspended<Exception> {
+                    call.respond(LocalPathContent(basedir.toPath(), Paths.get("/../build.gradle")))
+                }
+            }
+        }
+
+        client.get("/").let { response ->
+            assertFalse(response.status.isSuccess())
+        }
+    }
+
+    @Test
+    fun testSendLocalFileBadRelativePaths() = testApplication {
+        application {
+            intercept(ApplicationCallPipeline.Call) {
+                assertFailsWithSuspended<Exception> {
+                    call.respond(
+                        LocalPathContent(
+                            basedir.toPath(),
+                            Paths.get("/../../../../../../../../../../../../../etc/passwd")
+                        )
+                    )
+                }
+                assertFailsWithSuspended<Exception> {
+                    call.respond(
+                        LocalPathContent(
+                            basedir.toPath(),
+                            Paths.get("../../../../../../../../../../../../../etc/passwd")
+                        )
+                    )
+                }
+                assertFailsWithSuspended<Exception> {
+                    call.respond(LocalFileContent(basedir, "../build.gradle"))
+                }
+                assertFailsWithSuspended<Exception> {
+                    call.respond(LocalFileContent(basedir, "../../build.gradle"))
+                }
+                assertFailsWithSuspended<Exception> {
+                    call.respond(LocalFileContent(basedir, "/../build.gradle"))
+                }
+            }
+        }
+
+        client.get("/").let { response ->
+            assertFalse(response.status.isSuccess())
+        }
+    }
+
+    @Test
+    fun testInterceptCacheControl() = testApplication {
+        application {
+            intercept(ApplicationCallPipeline.Plugins) {
+                if (call.request.httpMethod == HttpMethod.Get ||
+                    call.request.httpMethod == HttpMethod.Head
+                ) {
+                    call.response.cacheControl(CacheControl.MaxAge(300))
+                }
+            }
+
+            intercept(ApplicationCallPipeline.Call) {
+                call.respond(LocalFileContent(File(basedir, "plugins/StaticContentTest.kt")))
+            }
+        }
+
+        client.get("/").let { response ->
+            assertEquals(
+                File(basedir, "plugins/StaticContentTest.kt".replaceSeparators()).readText(),
+                response.bodyAsText()
+            )
+            assertEquals("max-age=300", response.headers[HttpHeaders.CacheControl])
+        }
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun testLegacyPriority() = testApplication {
+        routing {
             route("/before") {
                 get {
                     call.respond("before")
@@ -1119,17 +1134,18 @@ class StaticContentTest {
             }
         }
 
-        handleRequest(HttpMethod.Get, "/before").let { result ->
-            assertEquals("before", result.response.content)
+        client.get("/before").let { response ->
+            assertEquals("before", response.bodyAsText())
         }
 
-        handleRequest(HttpMethod.Get, "/after").let { result ->
-            assertEquals("after", result.response.content)
+        client.get("/after").let { response ->
+            assertEquals("after", response.bodyAsText())
         }
     }
 
     @Test
-    fun testPreCompressedResourceServeEncodedResource() = testApplication {
+    @Suppress("DEPRECATION")
+    fun testLegacyResourcesPreCompressedServeEncoded() = testApplication {
         routing {
             static {
                 preCompressed {
@@ -1140,29 +1156,30 @@ class StaticContentTest {
 
         client.get("/test-resource.txt") {
             header(HttpHeaders.AcceptEncoding, "br")
-        }.let { result ->
-            assertEquals("br", result.bodyAsText().trim())
-            assertEquals(ContentType.Text.Plain, result.contentType()!!.withoutParameters())
-            assertEquals("br", result.headers[HttpHeaders.ContentEncoding].orEmpty())
+        }.let { response ->
+            assertEquals("br", response.bodyAsText().trim())
+            assertEquals(ContentType.Text.Plain, response.contentType()!!.withoutParameters())
+            assertEquals("br", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
 
         client.get("/test-resource.txt") {
             header(HttpHeaders.AcceptEncoding, "gzip")
-        }.let { result ->
-            assertEquals("gz", result.bodyAsText().trim())
-            assertEquals(ContentType.Text.Plain, result.contentType()!!.withoutParameters())
-            assertEquals("gzip", result.headers[HttpHeaders.ContentEncoding].orEmpty())
+        }.let { response ->
+            assertEquals("gz", response.bodyAsText().trim())
+            assertEquals(ContentType.Text.Plain, response.contentType()!!.withoutParameters())
+            assertEquals("gzip", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
 
-        client.get("/test-resource.txt").let { result ->
-            assertEquals("plain", result.bodyAsText().trim())
-            assertEquals(ContentType.Text.Plain, result.contentType()!!.withoutParameters())
-            assertNull(result.headers[HttpHeaders.ContentEncoding])
+        client.get("/test-resource.txt").let { response ->
+            assertEquals("plain", response.bodyAsText().trim())
+            assertEquals(ContentType.Text.Plain, response.contentType()!!.withoutParameters())
+            assertNull(response.headers[HttpHeaders.ContentEncoding])
         }
     }
 
     @Test
-    fun testPreCompressedResourceSuppressCompressionIfAlreadyCompressed() = testApplication {
+    @Suppress("DEPRECATION")
+    fun testLegacyPreCompressedSuppressCompressionIfAlreadyCompressed() = testApplication {
         install(Compression)
 
         routing {
@@ -1175,15 +1192,16 @@ class StaticContentTest {
 
         client.get("/test-resource.txt") {
             header(HttpHeaders.AcceptEncoding, "gzip")
-        }.let { result ->
-            assertEquals("gz", result.bodyAsText().trim())
-            assertEquals(ContentType.Text.Plain, result.contentType()!!.withoutParameters())
-            assertEquals("gzip", result.headers[HttpHeaders.ContentEncoding].orEmpty())
+        }.let { response ->
+            assertEquals("gz", response.bodyAsText().trim())
+            assertEquals(ContentType.Text.Plain, response.contentType()!!.withoutParameters())
+            assertEquals("gzip", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
     }
 
     @Test
-    fun testPreCompressedResourceTypesOrder() = testApplication {
+    @Suppress("DEPRECATION")
+    fun testResourcesPreCompressedTypesOrder() = testApplication {
         routing {
             static("firstgz") {
                 preCompressed(CompressedFileType.GZIP, CompressedFileType.BROTLI) {
@@ -1199,16 +1217,16 @@ class StaticContentTest {
 
         client.get("/firstgz/test-resource.txt") {
             header(HttpHeaders.AcceptEncoding, "gzip, br")
-        }.let { result ->
-            assertEquals(ContentType.Text.Plain, result.contentType()!!.withoutParameters())
-            assertEquals("gzip", result.headers[HttpHeaders.ContentEncoding].orEmpty())
+        }.let { response ->
+            assertEquals(ContentType.Text.Plain, response.contentType()!!.withoutParameters())
+            assertEquals("gzip", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
 
         client.get("/firstbr/test-resource.txt") {
             header(HttpHeaders.AcceptEncoding, "gzip, br")
-        }.let { result ->
-            assertEquals(ContentType.Text.Plain, result.contentType()!!.withoutParameters())
-            assertEquals("br", result.headers[HttpHeaders.ContentEncoding].orEmpty())
+        }.let { response ->
+            assertEquals(ContentType.Text.Plain, response.contentType()!!.withoutParameters())
+            assertEquals("br", response.headers[HttpHeaders.ContentEncoding].orEmpty())
         }
     }
 
@@ -1252,6 +1270,274 @@ class StaticContentTest {
         val responseZip = client.get("zip")
         assertEquals(ContentType.Text.Plain, responseZip.contentType()!!.withoutParameters())
         assertEquals("file-nested.txt", responseZip.bodyAsText().trim())
+    }
+
+    @Test
+    fun testCharset() = testApplication {
+        val fileName = "file"
+        val extensions = mapOf(
+            "js" to ContentType.Text.JavaScript,
+            "css" to ContentType.Text.CSS,
+            "svg" to ContentType.Image.SVG,
+            "xml" to ContentType.Application.Xml,
+        )
+
+        routing {
+            staticFiles("staticFiles", File("jvm/test-resources/public/types"))
+            staticFileSystem("staticFileSystem", "jvm/test-resources/public/types")
+            staticResources("staticResources", "public/types")
+        }
+
+        suspend fun testCharset(pathPrefix: String) {
+            extensions.forEach { (extension, contentType) ->
+                client.get("$pathPrefix/$fileName.$extension").apply {
+                    assertEquals(contentType.withCharset(Charsets.UTF_8), contentType())
+                }
+            }
+        }
+
+        testCharset("staticFiles")
+        testCharset("staticFileSystem")
+        testCharset("staticResources")
+    }
+
+    @Test
+    fun testPathFromChangingZip() = testApplication {
+        val stringPath = "jvm/test-resources/dynamic.zip"
+        val path = Paths.get(stringPath)
+        val firstFileName = "firstFile.txt"
+        val secondFileName = "secondFile.txt"
+        val firstContent = "Hello"
+        val secondContent = "World"
+        val firstZipFile = createZipFile(stringPath, firstFileName, firstContent)
+
+        routing {
+            staticZip(
+                remotePath = "static",
+                basePath = null,
+                zip = path,
+            )
+        }
+
+        val testWatchService = FileSystems.getDefault().newWatchService()
+        path.parent.register(
+            testWatchService,
+            arrayOf(
+                StandardWatchEventKinds.ENTRY_CREATE,
+                StandardWatchEventKinds.ENTRY_DELETE,
+                StandardWatchEventKinds.ENTRY_MODIFY,
+                StandardWatchEventKinds.OVERFLOW
+            ),
+            SensitivityWatchEventModifier.HIGH
+        )
+
+        val firstResponse = client.get("static/$firstFileName")
+        assertEquals(HttpStatusCode.OK, firstResponse.status)
+        assertEquals(firstContent, firstResponse.bodyAsText())
+
+        firstZipFile.delete()
+        val secondZipFile = createZipFile(stringPath, secondFileName, secondContent)
+
+        // Wait for the watch service to detect the change
+        testWatchService.take()
+        delay(3000)
+
+        val secondResponse = client.get("static/$secondFileName")
+        assertEquals(HttpStatusCode.OK, secondResponse.status)
+        assertEquals(secondContent, secondResponse.bodyAsText())
+
+        val firstNotFound = client.get("static/$firstFileName")
+        assertEquals(HttpStatusCode.NotFound, firstNotFound.status)
+
+        secondZipFile.delete()
+    }
+
+    private fun createZipFile(zipFileName: String, fileName: String, content: String): File {
+        FileOutputStream(zipFileName).use { fos ->
+            ZipOutputStream(fos).use { zos ->
+                val zipEntry = ZipEntry(fileName)
+                zos.putNextEntry(zipEntry)
+                zos.write(content.toByteArray())
+                zos.closeEntry()
+            }
+        }
+        return File(zipFileName)
+    }
+
+    @Test
+    fun `test custom ETag and LastModified with ConditionalHeaders`(@TempDir filesDir: File) = testApplication {
+        val date = GMTDate()
+        val etag = "etag"
+
+        install(ConditionalHeaders)
+        routing {
+            staticResources("staticResources", "public") {
+                configure(etag, date)
+            }
+            staticFiles("staticFiles", basedir) {
+                configure(etag, date)
+            }
+            staticFileSystem("staticFileSystem", "jvm/test-resources/public") {
+                configure(etag, date)
+            }
+            staticZip("staticZip", "public", Paths.get("jvm/test-resources/public.zip")) {
+                configure(etag, date)
+            }
+
+            val file = File(filesDir, "file.txt")
+            val brFile = File(filesDir, "file.txt.br")
+            file.writeText("file.txt")
+            brFile.writeText("temp.br")
+            staticFiles("staticFilesPrecompressed", filesDir) {
+                configure(etag, date)
+            }
+        }
+
+        suspend fun ApplicationTestBuilder.testCustomEtagAndLastModified(
+            url: String,
+            expectedEtag: String,
+            expectedDate: GMTDate,
+            acceptEncoding: String? = null
+        ) {
+            val response = client.get(url) {
+                headers {
+                    acceptEncoding?.let { append(HttpHeaders.AcceptEncoding, acceptEncoding) }
+                }
+            }
+            assertEquals(HttpStatusCode.OK, response.status)
+            val etag = response.headers[HttpHeaders.ETag] ?: fail("no ETag")
+            assertEquals(expectedEtag.quote(), etag)
+            assertEquals(expectedDate.toHttpDate(), response.headers[HttpHeaders.LastModified])
+            assertEquals(1, response.headers.getAll(HttpHeaders.LastModified)?.size)
+        }
+
+        testCustomEtagAndLastModified("staticFiles/plugins/PartialContentTest.kt", etag, date)
+        testCustomEtagAndLastModified("staticResources/nested/file-nested.txt", etag, date)
+        testCustomEtagAndLastModified("staticFileSystem/nested/file-nested.txt", etag, date)
+        testCustomEtagAndLastModified("staticZip/nested/file-nested.txt", etag, date)
+
+        // precompressed
+        testCustomEtagAndLastModified("staticFilesPrecompressed/file.txt", etag, date, "br")
+        testCustomEtagAndLastModified("staticResources/nested/file-nested.txt", etag, date, "br")
+        testCustomEtagAndLastModified("staticFileSystem/nested/file-nested.txt", etag, date, "br")
+        testCustomEtagAndLastModified("staticZip/nested/file-nested.txt", etag, date, "br")
+    }
+
+    @Test
+    fun testResourcesSiblings() = testApplication {
+        routing {
+            staticResources("/remote", "public/nested")
+            staticResources("/remote", "public")
+        }
+
+        val responseFileNested = client.get("/remote/file-nested.txt")
+        assertEquals(HttpStatusCode.OK, responseFileNested.status)
+        assertEquals("file-nested.txt", responseFileNested.bodyAsText().trim())
+
+        val responseFile = client.get("/remote/file.txt")
+        assertEquals(HttpStatusCode.OK, responseFile.status)
+        assertEquals("file.txt", responseFile.bodyAsText().trim())
+    }
+
+    private fun StaticContentConfig<*>.configure(etag: String, date: GMTDate) {
+        preCompressed(CompressedFileType.BROTLI)
+        etag { EntityTagVersion(etag) }
+        lastModified { date }
+    }
+
+    @Test
+    fun `test strong etag`(@TempDir filesDir: File) = testApplication {
+        File(filesDir, "test.txt").apply { writeText("test.txt") }
+        File(filesDir, "test.txt.br").apply { writeText("test.txt.br") }
+        File(filesDir, "test.txt.gz").apply { writeText("test.txt.gz") }
+
+        install(ConditionalHeaders)
+        routing {
+            staticFiles("/static", filesDir) {
+                preCompressed(CompressedFileType.BROTLI, CompressedFileType.GZIP)
+                etag(ETagProvider.StrongSha256)
+            }
+        }
+
+        val idResponse = client.get("/static/test.txt")
+        assertEquals(HttpStatusCode.OK, idResponse.status)
+        val idEtag = idResponse.headers[HttpHeaders.ETag] ?: error("missing ETag for identity")
+        assertNull(idResponse.headers[HttpHeaders.ContentEncoding])
+
+        val brResponse = client.get("/static/test.txt") {
+            header(HttpHeaders.AcceptEncoding, "br")
+        }
+        assertEquals(HttpStatusCode.OK, brResponse.status)
+        val brEtag = brResponse.headers[HttpHeaders.ETag] ?: error("missing ETag for br")
+        assertEquals("br", brResponse.headers[HttpHeaders.ContentEncoding])
+
+        val gzResponse = client.get("/static/test.txt") {
+            header(HttpHeaders.AcceptEncoding, "gzip")
+        }
+        assertEquals(HttpStatusCode.OK, gzResponse.status)
+        val gzEtag = gzResponse.headers[HttpHeaders.ETag] ?: error("missing ETag for gz")
+        assertEquals("gzip", gzResponse.headers[HttpHeaders.ContentEncoding])
+
+        assertNotEquals(idEtag, brEtag)
+        assertNotEquals(idEtag, gzEtag)
+        assertNotEquals(gzEtag, brEtag)
+    }
+
+    @Test
+    fun testDefaultFileCaching(@TempDir tempDir: Path) = testApplication {
+        val indexFile = tempDir.resolve("index.txt")
+        val indexBrFile = tempDir.resolve("index.txt.br")
+
+        routing {
+            staticFileSystem("static", tempDir.absolutePathString()) {
+                default("index.txt")
+                preCompressed(CompressedFileType.BROTLI)
+            }
+        }
+
+        val testWatchService = tempDir.fileSystem.newWatchService()
+        tempDir.register(
+            testWatchService,
+            StandardWatchEventKinds.ENTRY_CREATE,
+            StandardWatchEventKinds.ENTRY_DELETE,
+            StandardWatchEventKinds.ENTRY_MODIFY,
+        )
+
+        indexFile.writeText("index.txt")
+        indexBrFile.writeText("index.txt.br")
+
+        suspend fun ApplicationTestBuilder.testResponse(
+            url: String,
+            content: String,
+            type: CompressedFileType? = null
+        ) {
+            val response = client.get(url) {
+                headers {
+                    if (type != null) append(HttpHeaders.AcceptEncoding, type.encoding)
+                }
+            }
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(content, response.bodyAsText())
+            if (type != null) {
+                assertEquals(type.encoding, response.headers[HttpHeaders.ContentEncoding])
+            }
+        }
+
+        testResponse("static/error", "index.txt")
+        testResponse("static/error", "index.txt.br", CompressedFileType.BROTLI)
+
+        indexFile.deleteIfExists()
+        indexBrFile.deleteIfExists()
+
+        indexFile.writeText("new.txt")
+        indexBrFile.writeText("new.txt.br")
+
+        // Wait for the watch service to detect the change
+        testWatchService.take()
+        delay(3000)
+
+        testResponse("static/error", "new.txt")
+        testResponse("static/error", "new.txt.br", CompressedFileType.BROTLI)
     }
 }
 

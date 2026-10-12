@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.plugins.compression
@@ -12,6 +12,8 @@ import io.ktor.utils.io.*
 
 /**
  * A configuration for the [Compression] plugin.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.CompressionOptions)
  */
 public data class CompressionOptions(
     /**
@@ -26,6 +28,8 @@ public data class CompressionOptions(
 
 /**
  * An encoder configuration for the [Compression] plugin.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.CompressionEncoderConfig)
  */
 public data class CompressionEncoderConfig(
     /**
@@ -39,26 +43,64 @@ public data class CompressionEncoderConfig(
     /**
      * A priority of an encoder.
      */
-    val priority: Double
+    val priority: Double,
 )
 
 /**
  * A configuration for the [Compression] plugin.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.CompressionConfig)
  */
 @KtorDsl
 public class CompressionConfig : ConditionsHolderBuilder {
 
     public enum class Mode(internal val request: Boolean, internal val response: Boolean) {
-        CompressResponse(false, true), DecompressRequest(true, false), All(true, true)
+        CompressResponse(false, true),
+        DecompressRequest(true, false),
+        All(true, true),
     }
 
     /**
      * Specifies if the plugin should compress response, decompress request, or both.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.CompressionConfig.mode)
      */
     public var mode: Mode = Mode.All
 
     /**
+     * The maximum number of chained content encodings that will be decoded automatically.
+     *
+     * Requests whose `Content-Encoding` header lists more than this number of codecs will be
+     * rejected with a [ContentEncodingChainTooLongException]. This protects against
+     * "decompression bomb" attacks where a small request chains many encodings to expand into
+     * a huge payload.
+     *
+     * Set to a non-positive value to disable the chain length check. Defaults to
+     * [DEFAULT_MAX_ENCODING_CHAIN_LENGTH].
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.CompressionConfig.maxEncodingChainLength)
+     */
+    public var maxEncodingChainLength: Int = DEFAULT_MAX_ENCODING_CHAIN_LENGTH
+
+    /**
+     * The maximum size (in bytes) of the decoded request body.
+     *
+     * If decompression produces more than this number of bytes, a
+     * [PayloadTooLargeException] is thrown and the decoded channel is cancelled. This protects
+     * against "decompression bomb" attacks where a small compressed body decompresses to a huge
+     * payload.
+     *
+     * Set to a non-positive value to disable the size cap. Defaults to
+     * [DEFAULT_MAX_DECODED_CONTENT_LENGTH] (disabled).
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.CompressionConfig.maxDecodedContentLength)
+     */
+    public var maxDecodedContentLength: Long = DEFAULT_MAX_DECODED_CONTENT_LENGTH
+
+    /**
      * Provides access to a map of encoders.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.CompressionConfig.encoders)
      */
     public val encoders: MutableMap<String, CompressionEncoderBuilder> = hashMapOf()
 
@@ -66,7 +108,10 @@ public class CompressionConfig : ConditionsHolderBuilder {
 
     /**
      * Appends an [encoder] with the [block] configuration.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.CompressionConfig.encoder)
      */
+    @OptIn(InternalAPI::class)
     public fun encoder(
         encoder: ContentEncoder,
         block: CompressionEncoderBuilder.() -> Unit = {}
@@ -80,6 +125,8 @@ public class CompressionConfig : ConditionsHolderBuilder {
 
     /**
      * Appends the default configuration with the `gzip`, `deflate`, and `identity` encoders.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.CompressionConfig.default)
      */
     public fun default() {
         gzip()
@@ -104,30 +151,40 @@ public class CompressionConfig : ConditionsHolderBuilder {
 
 /**
  * A builder for conditions.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.ConditionsHolderBuilder)
  */
 public interface ConditionsHolderBuilder {
     /**
      * Preconditions applied to every response object to check if it should be compressed.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.ConditionsHolderBuilder.conditions)
      */
     public val conditions: MutableList<ApplicationCall.(OutgoingContent) -> Boolean>
 }
 
 /**
  * A builder for compression encoder configuration.
- * @property name of encoder
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.CompressionEncoderBuilder)
+ *
  * @property encoder instance
  */
-@Suppress("MemberVisibilityCanBePrivate")
-public class CompressionEncoderBuilder internal constructor(
+public class CompressionEncoderBuilder @InternalAPI constructor(
     public val encoder: ContentEncoder
 ) : ConditionsHolderBuilder {
+
     /**
      * A list of conditions for this encoder
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.CompressionEncoderBuilder.conditions)
      */
     override val conditions: ArrayList<ApplicationCall.(OutgoingContent) -> Boolean> = arrayListOf()
 
     /**
      * A priority for this encoder.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.CompressionEncoderBuilder.priority)
      */
     public var priority: Double = 1.0
 
@@ -138,6 +195,8 @@ public class CompressionEncoderBuilder internal constructor(
 
 /**
  * Appends the `gzip` encoder with the [block] configuration.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.gzip)
  */
 public fun CompressionConfig.gzip(block: CompressionEncoderBuilder.() -> Unit = {}) {
     encoder(GZipEncoder, block)
@@ -145,6 +204,8 @@ public fun CompressionConfig.gzip(block: CompressionEncoderBuilder.() -> Unit = 
 
 /**
  * Appends the `deflate` encoder with the [block] configuration and the 0.9 priority.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.deflate)
  */
 public fun CompressionConfig.deflate(block: CompressionEncoderBuilder.() -> Unit = {}) {
     encoder(DeflateEncoder) {
@@ -155,6 +216,8 @@ public fun CompressionConfig.deflate(block: CompressionEncoderBuilder.() -> Unit
 
 /**
  * Appends the `identity` encoder with the [block] configuration.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.identity)
  */
 public fun CompressionConfig.identity(block: CompressionEncoderBuilder.() -> Unit = {}) {
     encoder(IdentityEncoder, block)
@@ -166,6 +229,8 @@ public fun CompressionConfig.identity(block: CompressionEncoderBuilder.() -> Uni
  * If at least one condition is not met, a response isn't compressed.
  *
  * Note that adding a single condition removes the default configuration.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.condition)
  */
 public fun ConditionsHolderBuilder.condition(predicate: ApplicationCall.(OutgoingContent) -> Boolean) {
     conditions.add(predicate)
@@ -175,6 +240,8 @@ public fun ConditionsHolderBuilder.condition(predicate: ApplicationCall.(Outgoin
  * Appends a minimum size condition to the encoder or the [Compression] configuration.
  *
  * Note that adding a single minimum size condition removes the default configuration.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.minimumSize)
  */
 public fun ConditionsHolderBuilder.minimumSize(minSize: Long) {
     condition { content -> content.contentLength?.let { it >= minSize } ?: true }
@@ -184,6 +251,8 @@ public fun ConditionsHolderBuilder.minimumSize(minSize: Long) {
  * Appends a content type condition to the encoder or the [Compression] configuration.
  *
  * Note that adding a single condition removes the default configuration.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.matchContentType)
  */
 public fun ConditionsHolderBuilder.matchContentType(vararg mimeTypes: ContentType) {
     condition { content ->
@@ -196,6 +265,8 @@ public fun ConditionsHolderBuilder.matchContentType(vararg mimeTypes: ContentTyp
  * Appends a content type exclusion condition to the encoder or the [Compression] configuration.
  *
  * Note that adding a single match condition removes the default configuration.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.plugins.compression.excludeContentType)
  */
 public fun ConditionsHolderBuilder.excludeContentType(vararg mimeTypes: ContentType) {
     condition { content ->

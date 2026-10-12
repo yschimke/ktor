@@ -1,17 +1,19 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.util.pipeline
 
 import io.ktor.utils.io.*
-import kotlinx.coroutines.*
-import kotlin.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlin.coroutines.CoroutineContext
 
 internal expect val DISABLE_SFG: Boolean
 
 /**
  * Represents running execution of a pipeline
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.PipelineContext)
  *
  * @param context: object representing context in which pipeline executes
  */
@@ -22,21 +24,29 @@ public abstract class PipelineContext<TSubject : Any, TContext : Any>(
 
     /**
      * Subject of this pipeline execution that goes along the pipeline
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.PipelineContext.subject)
      */
     public abstract var subject: TSubject
 
     /**
      * Finishes current pipeline execution
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.PipelineContext.finish)
      */
     public abstract fun finish()
 
     /**
      * Continues execution of the pipeline with the given subject
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.PipelineContext.proceedWith)
      */
     public abstract suspend fun proceedWith(subject: TSubject): TSubject
 
     /**
      * Continues execution of the pipeline with the same subject
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.pipeline.PipelineContext.proceed)
      */
     public abstract suspend fun proceed(): TSubject
 
@@ -48,7 +58,7 @@ public abstract class PipelineContext<TSubject : Any, TContext : Any>(
  */
 internal fun <TSubject : Any, TContext : Any> pipelineContextFor(
     context: TContext,
-    interceptors: List<PipelineInterceptorFunction<TSubject, TContext>>,
+    interceptors: List<PipelineInterceptor<TSubject, TContext>>,
     subject: TSubject,
     coroutineContext: CoroutineContext,
     debugMode: Boolean = false

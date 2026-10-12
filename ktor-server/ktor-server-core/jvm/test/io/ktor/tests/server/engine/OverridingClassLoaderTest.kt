@@ -4,10 +4,12 @@
 
 package io.ktor.server.engine
 
-import java.io.*
-import java.net.*
-import kotlin.reflect.full.*
-import kotlin.test.*
+import java.io.InputStream
+import java.net.URL
+import kotlin.reflect.full.primaryConstructor
+import kotlin.test.Ignore
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 class OverridingClassLoaderTest {
 

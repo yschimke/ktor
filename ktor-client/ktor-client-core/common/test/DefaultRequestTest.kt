@@ -1,22 +1,32 @@
+/*
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 import io.ktor.client.*
+import io.ktor.client.engine.HttpClientEngine
+import io.ktor.client.engine.HttpClientEngineCapability
+import io.ktor.client.engine.HttpClientEngineConfig
 import io.ktor.client.engine.mock.*
 import io.ktor.client.plugins.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
-import io.ktor.test.dispatcher.*
 import io.ktor.util.*
-import kotlin.test.*
-
-/*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
- */
+import io.ktor.util.date.GMTDate
+import io.ktor.utils.io.InternalAPI
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.job
+import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.CoroutineContext
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class DefaultRequestTest {
 
     @Test
-    fun testDefaultPathWithDir() = testSuspend {
+    fun testDefaultPathWithDir() = runTest {
         val client = HttpClient(MockEngine) {
             engine {
                 addHandler {
@@ -37,7 +47,7 @@ class DefaultRequestTest {
     }
 
     @Test
-    fun testDefaultPathWithFile() = testSuspend {
+    fun testDefaultPathWithFile() = runTest {
         val client = HttpClient(MockEngine) {
             engine {
                 addHandler {
@@ -58,7 +68,7 @@ class DefaultRequestTest {
     }
 
     @Test
-    fun testDefaultWithoutUrl() = testSuspend {
+    fun testDefaultWithoutUrl() = runTest {
         val client = HttpClient(MockEngine) {
             engine {
                 addHandler {
@@ -77,7 +87,7 @@ class DefaultRequestTest {
     }
 
     @Test
-    fun testDefaultHostAndPort() = testSuspend {
+    fun testDefaultHostAndPort() = runTest {
         val client = HttpClient(MockEngine) {
             engine {
                 addHandler {
@@ -97,7 +107,7 @@ class DefaultRequestTest {
     }
 
     @Test
-    fun testDefaultProtocol() = testSuspend {
+    fun testDefaultProtocol() = runTest {
         val client = HttpClient(MockEngine) {
             engine {
                 addHandler {
@@ -125,7 +135,7 @@ class DefaultRequestTest {
     }
 
     @Test
-    fun testDefaultNoPortKeepsRequestPort() = testSuspend {
+    fun testDefaultNoPortKeepsRequestPort() = runTest {
         val client = HttpClient(MockEngine) {
             engine {
                 addHandler {
@@ -145,7 +155,7 @@ class DefaultRequestTest {
     }
 
     @Test
-    fun testDefaultHeader() = testSuspend {
+    fun testDefaultHeader() = runTest {
         val client = HttpClient(MockEngine) {
             engine {
                 addHandler {
@@ -172,7 +182,7 @@ class DefaultRequestTest {
     }
 
     @Test
-    fun testDefaultAttributes() = testSuspend {
+    fun testDefaultAttributes() = runTest {
         val client = HttpClient(MockEngine) {
             engine {
                 addHandler {
@@ -190,7 +200,7 @@ class DefaultRequestTest {
     }
 
     @Test
-    fun testDefaultQuery() = testSuspend {
+    fun testDefaultQuery() = runTest {
         val client = HttpClient(MockEngine) {
             engine {
                 addHandler {
@@ -208,7 +218,7 @@ class DefaultRequestTest {
     }
 
     @Test
-    fun testDefaultFragment() = testSuspend {
+    fun testDefaultFragment() = runTest {
         val client = HttpClient(MockEngine) {
             engine {
                 addHandler {
@@ -226,7 +236,7 @@ class DefaultRequestTest {
     }
 
     @Test
-    fun testCookieSentOnce() = testSuspend {
+    fun testCookieSentOnce() = runTest {
         val client = HttpClient(MockEngine) {
             engine {
                 addHandler {
@@ -249,6 +259,172 @@ class DefaultRequestTest {
         }
 
         request.execute()
+    }
+
+    @Test
+    fun testDefaultRequestConfigDoesntOverrideUserHeaders() = runTest {
+        val client = HttpClient(MockEngine) {
+            engine {
+                addHandler {
+                    respond(it.headers[HttpHeaders.ContentType] ?: "")
+                }
+            }
+
+            defaultRequest {
+                contentType(ContentType.Application.Json)
+            }
+        }
+        val response = client.get("/") {
+            contentType(ContentType.Application.Xml)
+        }
+
+        assertEquals("application/xml", response.bodyAsText())
+    }
+
+    @Test
+    fun testDefaultRequestWithReplace() = runTest {
+        val first = "Bearer firstAuth"
+        val client = HttpClient(MockEngine) {
+            engine {
+                addHandler {
+                    respond("OK")
+                }
+            }
+
+            defaultRequest {
+                headers.append(HttpHeaders.Authorization, first)
+            }
+        }
+
+        client.get("/ok").apply {
+            assertEquals(first, request.headers[HttpHeaders.Authorization])
+        }
+
+        val second = "Bearer secondAuth"
+        val client2 = client.config {
+            defaultRequest(replace = true) {
+                headers.append(HttpHeaders.Authorization, second)
+            }
+        }
+        client2.get("/ok").apply {
+            assertEquals(second, request.headers.getAll(HttpHeaders.Authorization)?.joinToString())
+        }
+    }
+
+    @Test
+    fun testHeadersBlockInDefaultRequest() = runTest {
+        val client = HttpClient(MockEngine) {
+            engine {
+                addHandler {
+                    respond(
+                        it.headers[HttpHeaders.Authorization] + ", " +
+                            it.headers[HttpHeaders.Accept]
+                    )
+                }
+            }
+
+            defaultRequest {
+                url("https://api.example.com")
+                headers {
+                    append(HttpHeaders.Authorization, "Bearer my-secret-token")
+                    append(HttpHeaders.Accept, ContentType.Application.Json.toString())
+                }
+            }
+        }
+
+        assertEquals(
+            "Bearer my-secret-token, application/json",
+            client.get("/endpoint").bodyAsText()
+        )
+    }
+
+    @Test
+    fun testHeadersBlockWithMultipleAppends() = runTest {
+        val client = HttpClient(MockEngine) {
+            engine {
+                addHandler {
+                    respond(it.headers.getAll("X-Custom-Header")?.joinToString() ?: "missing")
+                }
+            }
+
+            defaultRequest {
+                headers {
+                    append("X-Custom-Header", "value1")
+                    append("X-Custom-Header", "value2")
+                }
+            }
+        }
+
+        assertEquals("value1, value2", client.get("/").bodyAsText())
+    }
+
+    @Test
+    fun testHeadersBlockChainingInDefaultRequest() = runTest {
+        val client = HttpClient(MockEngine) {
+            engine {
+                addHandler {
+                    respond(
+                        it.headers["X-First"] + ", " + it.headers["X-Second"]
+                    )
+                }
+            }
+
+            defaultRequest {
+                headers {
+                    append("X-First", "first-value")
+                }
+                headers {
+                    append("X-Second", "second-value")
+                }
+            }
+        }
+
+        assertEquals("first-value, second-value", client.get("/").bodyAsText())
+    }
+
+    @Test
+    fun testEngineCapabilitiesGetMerged() = runTest {
+        val job = Job(backgroundScope.coroutineContext.job)
+        HttpClient(object : HttpClientEngine {
+            override val supportedCapabilities: Set<HttpClientEngineCapability<*>>
+                get() = setOf(HttpTimeoutCapability, UnixSocketCapability)
+            override val dispatcher: CoroutineDispatcher
+                get() = error("Unused")
+            override val config: HttpClientEngineConfig
+                get() = HttpClientEngineConfig()
+
+            @InternalAPI
+            override suspend fun execute(data: HttpRequestData): HttpResponseData {
+                assertTrue(message = "Request must contain timeout capability") {
+                    data.requiredCapabilities.contains(HttpTimeoutCapability)
+                }
+                assertTrue(message = "Request must contain unix socket capability") {
+                    data.requiredCapabilities.contains(UnixSocketCapability)
+                }
+
+                return HttpResponseData(
+                    HttpStatusCode.OK,
+                    GMTDate.START,
+                    Headers.Empty,
+                    HttpProtocolVersion.HTTP_1_1,
+                    Unit,
+                    Job(backgroundScope.coroutineContext.job),
+                )
+            }
+
+            override val coroutineContext: CoroutineContext
+                get() = job
+
+            override fun close() {}
+        }) {
+            defaultRequest {
+                unixSocket("engine.sock")
+            }
+        }.preparePost("/") {
+            timeout {
+                requestTimeoutMillis = 10000
+            }
+        }.execute()
     }
 }
 

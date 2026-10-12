@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2023 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.engine.jetty.jakarta
@@ -8,12 +8,39 @@ import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.plugins.*
 import io.ktor.client.request.*
-import io.ktor.client.tests.utils.*
+import io.ktor.client.test.base.*
+import io.ktor.client.utils.*
+import io.ktor.http.*
 import io.ktor.test.dispatcher.*
-import io.ktor.utils.io.errors.*
-import kotlin.test.*
+import io.ktor.util.*
+import io.ktor.utils.io.*
+import kotlinx.coroutines.Job
+import kotlinx.io.IOException
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class JettyHttp2EngineTest {
+
+    @OptIn(InternalAPI::class)
+    @Test
+    fun `custom Host header overrides default in headers frame`() {
+        val requestData = HttpRequestData(
+            Url("http://127.0.0.1:8080/test"),
+            HttpMethod.Get,
+            Headers.build {
+                append(HttpHeaders.Host, "CustomHost")
+            },
+            EmptyContent,
+            Job(),
+            Attributes()
+        )
+
+        val headersFrame = requestData.prepareHeadersFrame()
+        val authority = (headersFrame.metaData as org.eclipse.jetty.http.MetaData.Request).httpURI.authority
+
+        assertEquals("CustomHost", authority)
+    }
 
     @Test
     fun testConnectingToNonHttp2Server() = testSuspend {

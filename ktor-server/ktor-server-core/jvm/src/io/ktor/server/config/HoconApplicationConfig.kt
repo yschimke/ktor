@@ -1,20 +1,27 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.config
 
-import com.typesafe.config.*
-import io.ktor.server.config.ConfigLoader.Companion.load
-import java.io.*
+import com.typesafe.config.Config
+import com.typesafe.config.ConfigFactory
+import com.typesafe.config.ConfigValueType
+import io.ktor.util.reflect.*
+import io.ktor.utils.io.*
+import java.io.File
 
 /**
  * Loads a [Config] from a hocon file.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.config.HoconConfigLoader)
  */
 public class HoconConfigLoader : ConfigLoader {
 
     /**
      * Tries loading an application configuration from the specified [path].
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.config.HoconConfigLoader.load)
      *
      * @return configuration or null if the path is not found or configuration format is not supported.
      */
@@ -28,6 +35,7 @@ public class HoconConfigLoader : ConfigLoader {
         val resource = Thread.currentThread().contextClassLoader.getResource(resolvedPath)
         val config = when {
             resource != null -> ConfigFactory.load(resolvedPath)
+
             else -> {
                 val file = File(resolvedPath)
                 if (file.exists()) ConfigFactory.parseFile(file) else null
@@ -40,6 +48,8 @@ public class HoconConfigLoader : ConfigLoader {
 
 /**
  * Implements [ApplicationConfig] by loading configuration from HOCON data structures
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.config.HoconApplicationConfig)
  */
 public open class HoconApplicationConfig(private val config: Config) : ApplicationConfig {
     override fun property(path: String): ApplicationConfigValue {
@@ -60,7 +70,8 @@ public open class HoconApplicationConfig(private val config: Config) : Applicati
         return config.getConfigList(path).map { HoconApplicationConfig(it) }
     }
 
-    override fun config(path: String): ApplicationConfig = HoconApplicationConfig(config.getConfig(path))
+    override fun config(path: String): ApplicationConfig =
+        HoconApplicationConfig(config.getConfig(path))
 
     override fun keys(): Set<String> {
         return config.entrySet().map { it.key }.toSet()
@@ -73,22 +84,50 @@ public open class HoconApplicationConfig(private val config: Config) : Applicati
     private class HoconApplicationConfigValue(val config: Config, val path: String) : ApplicationConfigValue {
         override fun getString(): String = config.getString(path)
         override fun getList(): List<String> = config.getStringList(path)
+
+        override val type: ApplicationConfigValue.Type =
+            when (config.getValue(path).valueType()) {
+                ConfigValueType.STRING,
+                ConfigValueType.NUMBER,
+                ConfigValueType.BOOLEAN -> ApplicationConfigValue.Type.SINGLE
+
+                ConfigValueType.NULL -> ApplicationConfigValue.Type.NULL
+
+                ConfigValueType.LIST -> ApplicationConfigValue.Type.LIST
+
+                ConfigValueType.OBJECT -> ApplicationConfigValue.Type.OBJECT
+            }
+
+        override fun getMap(): Map<String, Any?> =
+            config.getObject(path).unwrapped()
+
+        @OptIn(InternalAPI::class)
+        override fun getAs(type: TypeInfo): Any? {
+            return type.serializer()
+                .deserialize(HoconDecoder(config, path))
+        }
     }
 }
 
 /**
  * Returns a string value for [path] or `null` if missing
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.config.tryGetString)
  */
 public fun Config.tryGetString(path: String): String? = if (hasPath(path)) getString(path) else null
 
 /**
  * Returns a list of values for [path] or `null` if missing
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.config.tryGetStringList)
  */
 public fun Config.tryGetStringList(path: String): List<String>? = if (hasPath(path)) getStringList(path) else null
 
 /**
  * Returns [ApplicationConfig] by loading configuration from a resource specified by [configPath]
  * or a default resource if [configPath] is `null`
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.config.ApplicationConfig)
  */
 public fun ApplicationConfig(configPath: String?): ApplicationConfig =
     ConfigLoader.load(configPath)

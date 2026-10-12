@@ -5,16 +5,21 @@
 package io.ktor.client.plugins
 
 import io.ktor.client.*
+import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import io.ktor.http.cio.*
 import io.ktor.http.content.*
-import io.ktor.util.*
 import io.ktor.util.logging.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.core.*
-import kotlinx.coroutines.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.job
+import kotlinx.io.RawSource
+import kotlinx.io.Source
 
 private val LOGGER = KtorSimpleLogger("io.ktor.client.plugins.defaultTransformers")
 
@@ -22,6 +27,8 @@ private val LOGGER = KtorSimpleLogger("io.ktor.client.plugins.defaultTransformer
  * Install default transformers.
  * Usually installed by default so there is no need to use it
  * unless you have disabled it via [HttpClientConfig.useDefaultTransformers].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.defaultTransformers)
  */
 @OptIn(InternalAPI::class)
 public fun HttpClient.defaultTransformers() {
@@ -48,16 +55,24 @@ public fun HttpClient.defaultTransformers() {
                 override fun readFrom(): ByteReadChannel = body
             }
 
+            is RawSource -> object : OutgoingContent.ReadChannelContent() {
+                override val contentLength = context.headers[HttpHeaders.ContentLength]?.toLong()
+                override val contentType: ContentType = contentType ?: ContentType.Application.OctetStream
+                override fun readFrom(): ByteReadChannel = ByteReadChannel(body)
+            }
+
             is OutgoingContent -> body
+
             else -> platformRequestDefaultTransform(contentType, context, body)
         }
         if (content?.contentType != null) {
             context.headers.remove(HttpHeaders.ContentType)
-            LOGGER.trace("Transformed with default transformers request body for ${context.url} from ${body::class}")
+            LOGGER.trace { "Transformed with default transformers request body for ${context.url} from ${body::class}" }
             proceedWith(content)
         }
     }
 
+    val clientScope = this
     responsePipeline.intercept(HttpResponsePipeline.Parse) { (info, body) ->
         if (body !is ByteReadChannel) return@intercept
         val response = context.response
@@ -69,17 +84,22 @@ public fun HttpClient.defaultTransformers() {
             }
 
             Int::class -> {
-                proceedWith(HttpResponseContainer(info, body.readRemaining().readText().toInt()))
+                proceedWith(HttpResponseContainer(info, body.readBuffer().readText().toInt()))
             }
 
-            ByteReadPacket::class,
-            @Suppress("DEPRECATION")
+            Source::class,
             Input::class -> {
-                proceedWith(HttpResponseContainer(info, body.readRemaining()))
+                proceedWith(HttpResponseContainer(info, body.readBuffer()))
             }
 
             ByteArray::class -> {
                 val bytes = body.toByteArray()
+                checkContentLength(
+                    contentLength = context.response.contentLength(),
+                    bodySize = bytes.size.toLong(),
+                    method = context.request.method
+                )
+
                 proceedWith(HttpResponseContainer(info, bytes))
             }
 
@@ -87,23 +107,28 @@ public fun HttpClient.defaultTransformers() {
                 // the response job could be already completed, so the job holder
                 // could be canceled immediately, but it doesn't matter
                 // since the copying job is running under the client job
-                val responseJobHolder = Job(response.coroutineContext[Job])
-                val channel: ByteReadChannel = writer(response.coroutineContext) {
+                val responseJobHolder = Job(response.coroutineContext.job)
+                val byteChannel = ByteChannel()
+                val channel: ByteReadChannel = clientScope.writer(channel = byteChannel) {
                     try {
                         body.copyTo(channel, limit = Long.MAX_VALUE)
+                        body.rethrowCloseCauseIfNeeded()
                     } catch (cause: CancellationException) {
                         response.cancel(cause)
                         throw cause
                     } catch (cause: Throwable) {
                         response.cancel("Receive failed", cause)
                         throw cause
-                    } finally {
-                        response.complete()
                     }
                 }.also { writerJob ->
+                    // writer finishes → complete responseJobHolder
                     writerJob.invokeOnCompletion {
                         responseJobHolder.complete()
                     }
+                    // response job cancels → cancel output
+                    byteChannel.attachJob(response.coroutineContext.job)
+                    // output cancels → cancel source
+                    body.attachWriterJob(writerJob)
                 }.channel
 
                 proceedWith(HttpResponseContainer(info, channel))
@@ -114,13 +139,28 @@ public fun HttpClient.defaultTransformers() {
                 proceedWith(HttpResponseContainer(info, response.status))
             }
 
+            MultiPartData::class -> {
+                val rawContentType = checkNotNull(context.response.headers[HttpHeaders.ContentType]) {
+                    "No content type provided for multipart"
+                }
+                val contentType = ContentType.parse(rawContentType)
+                check(contentType.match(ContentType.MultiPart.FormData)) {
+                    "Expected multipart/form-data, got $contentType"
+                }
+
+                val contentLength = context.response.headers[HttpHeaders.ContentLength]?.toLong()
+                val body = CIOMultipartDataBase(coroutineContext, body, rawContentType, contentLength)
+                val parsedResponse = HttpResponseContainer(info, body)
+
+                proceedWith(parsedResponse)
+            }
+
             else -> null
         }
         if (result != null) {
-            LOGGER.trace(
-                "Transformed with default transformers response body " +
-                    "for ${context.request.url} to ${info.type}"
-            )
+            LOGGER.trace {
+                "Transformed with default transformers response body for ${context.request.url} to ${info.type}"
+            }
         }
     }
 

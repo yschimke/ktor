@@ -1,38 +1,45 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.engine.winhttp.internal
 
 import io.ktor.client.engine.winhttp.*
+import io.ktor.client.plugins.websocket.WEBSOCKETS_KEY
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.http.content.*
+import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.core.*
-import kotlinx.atomicfu.*
+import io.ktor.websocket.ChannelConfig
+import kotlinx.atomicfu.atomic
 import kotlinx.cinterop.*
-import platform.windows.*
+import platform.windows.DWORDVar
+import platform.windows.ERROR_INSUFFICIENT_BUFFER
+import platform.windows.GetLastError
 import platform.windows.SECURITY_FLAG_IGNORE_CERT_CN_INVALID
 import platform.windows.SECURITY_FLAG_IGNORE_CERT_DATE_INVALID
 import platform.windows.SECURITY_FLAG_IGNORE_UNKNOWN_CA
 import platform.winhttp.*
-import kotlin.coroutines.*
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 @OptIn(ExperimentalForeignApi::class)
-internal class WinHttpRequest @OptIn(ExperimentalForeignApi::class) constructor(
+internal class WinHttpRequest(
     hSession: COpaquePointer,
     data: HttpRequestData,
     config: WinHttpClientEngineConfig
 ) : Closeable {
     private val connect: WinHttpConnect
 
-    @OptIn(ExperimentalForeignApi::class)
     private val hRequest: COpaquePointer
     private val closed = atomic(false)
     private val requestClosed = atomic(false)
 
-    @OptIn(ExperimentalForeignApi::class)
     private val connectReference: StableRef<WinHttpConnect>
+
+    private val attributes = data.attributes
 
     init {
         val hConnect = WinHttpConnect(hSession, data.url.host, data.url.port.convert(), 0.convert())
@@ -206,14 +213,19 @@ internal class WinHttpRequest @OptIn(ExperimentalForeignApi::class) constructor(
      *
      * @param callContext is call context.
      */
+    @OptIn(InternalAPI::class)
     fun createWebSocket(callContext: CoroutineContext): WinHttpWebSocket {
         val statePtr = connectReference.asCPointer().rawValue.toLong()
         val hWebsocket = WinHttpWebSocketCompleteUpgrade(hRequest, statePtr.convert())
             ?: throw getWinHttpException("Unable to upgrade websocket")
+        val wsConfig = attributes[WEBSOCKETS_KEY]
 
-        return WinHttpWebSocket(hWebsocket, connect, callContext).also {
-            closeRequest()
-        }
+        return WinHttpWebSocket(
+            hWebsocket,
+            connect,
+            callContext,
+            wsConfig.channelsConfig
+        ).also { closeRequest() }
     }
 
     /**
@@ -324,19 +336,15 @@ internal class WinHttpRequest @OptIn(ExperimentalForeignApi::class) constructor(
     }
 
     /**
-     * Gets a HTTP protocol version from server response.
+     * Gets an HTTP protocol version from server response.
      */
-    private fun isHttp2Response() = memScoped {
+    private fun isHttp2Response(): Boolean = memScoped {
         val flags = alloc<UIntVar>()
         val dwSize = alloc<UIntVar> {
             value = UINT_SIZE
         }
-        if (WinHttpQueryOption(hRequest, WINHTTP_OPTION_HTTP_PROTOCOL_USED, flags.ptr, dwSize.ptr) != 0) {
-            if ((flags.value.convert<Int>() and WINHTTP_PROTOCOL_FLAG_HTTP2) != 0) {
-                return true
-            }
-        }
-        false
+        WinHttpQueryOption(hRequest, WINHTTP_OPTION_HTTP_PROTOCOL_USED, flags.ptr, dwSize.ptr) != 0 &&
+            (flags.value.convert<Int>() and WINHTTP_PROTOCOL_FLAG_HTTP2) != 0
     }
 
     private fun closeRequest() {

@@ -6,6 +6,7 @@ package io.ktor.util
 
 import kotlin.test.*
 
+@Suppress("DEPRECATION")
 class Base64Test {
 
     @Test
@@ -37,7 +38,7 @@ class Base64Test {
     }
 
     @Test
-    fun paddingTest() {
+    fun encodeDecodeWithPaddingTest() {
         val cases = mapOf(
             "This" to "VGhpcw==",
             "Thi" to "VGhp",
@@ -50,5 +51,38 @@ class Base64Test {
             assertEquals(encodedText, text.encodeBase64())
             assertEquals(text, encodedText.decodeBase64String())
         }
+    }
+
+    @Test
+    fun decodeWithoutPaddingTest() {
+        val cases = mapOf(
+            "This" to "VGhpcw",
+            "Thi" to "VGhp",
+            "Th" to "VGg",
+            "T" to "VA",
+            "" to ""
+        )
+
+        cases.forEach { (text, encodedText) ->
+            assertEquals(text, encodedText.decodeBase64String())
+        }
+    }
+
+    @Test
+    fun testEncodeDecodeAllCharacters() {
+        val commonChars: List<Char> = ('a'..'z') + ('A'..'Z') + ('0'..'9')
+        val allBase64Chars: String = (commonChars + '+' + '/').joinToString("")
+        val allUrlSafeBase64Chars: String = (commonChars + '-' + '_').joinToString("")
+
+        val expectedBytes: List<Byte> = listOf(
+            105, -73, 29, 121, -8, 33, -118, 57, 37, -102, 122, 41, -86, -69, 45, -70, -4, 49, -53, 48, 1, 8, 49, 5,
+            24, 114, 9, 40, -77, 13, 56, -12, 17, 73, 53, 21, 89, 118, 25, -45, 93, -73, -29, -98, -69, -13, -33, -65,
+        )
+
+        // Check encode
+        assertEquals(allBase64Chars, expectedBytes.toByteArray().encodeBase64())
+        // Check decode
+        assertEquals(expectedBytes, allBase64Chars.decodeBase64Bytes().toList())
+        assertEquals(expectedBytes, allUrlSafeBase64Chars.decodeBase64Bytes().toList())
     }
 }

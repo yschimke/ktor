@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.plugins.resources
@@ -30,6 +30,8 @@ import io.ktor.resources.Resources as ResourcesCore
  * val addedUser = client.get(Users.ById(newUserId)) // "/user/123"
  * ```
  *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.Resources)
+ *
  * @see Resource
  */
 public object Resources : HttpClientPlugin<ResourcesCore.Configuration, ResourcesCore> {
@@ -50,6 +52,8 @@ public object Resources : HttpClientPlugin<ResourcesCore.Configuration, Resource
  * Constructs a URL for [resource].
  *
  * The class of the [resource] instance **must** be annotated with [Resource].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.href)
  */
 public inline fun <reified T : Any> HttpClient.href(resource: T): String {
     return href(plugin(Resources).resourcesFormat, resource)
@@ -59,6 +63,8 @@ public inline fun <reified T : Any> HttpClient.href(resource: T): String {
  * Constructs a URL for [resource].
  *
  * The class of the [resource] instance **must** be annotated with [Resource].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.href)
  */
 public inline fun <reified T : Any> HttpClient.href(resource: T, urlBuilder: URLBuilder) {
     href(plugin(Resources).resourcesFormat, resource, urlBuilder)

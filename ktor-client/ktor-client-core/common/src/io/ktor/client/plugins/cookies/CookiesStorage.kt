@@ -10,21 +10,29 @@ import io.ktor.utils.io.core.*
 
 /**
  * A storage for [Cookie].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.cookies.CookiesStorage)
  */
 public interface CookiesStorage : Closeable {
     /**
      * Gets a map of [String] to [Cookie] for a specific host.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.cookies.CookiesStorage.get)
      */
     public suspend fun get(requestUrl: Url): List<Cookie>
 
     /**
      * Sets a [cookie] for the specified host.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.cookies.CookiesStorage.addCookie)
      */
     public suspend fun addCookie(requestUrl: Url, cookie: Cookie)
 }
 
 /**
  * Adds a [cookie] with the [urlString] key to storage.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.cookies.addCookie)
  */
 public suspend fun CookiesStorage.addCookie(urlString: String, cookie: Cookie) {
     addCookie(Url(urlString), cookie)
@@ -32,23 +40,23 @@ public suspend fun CookiesStorage.addCookie(urlString: String, cookie: Cookie) {
 
 /**
  * Checks if [Cookie] matches [requestUrl].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.cookies.matches)
  */
 public fun Cookie.matches(requestUrl: Url): Boolean {
-    val domain = domain?.toLowerCasePreservingASCIIRules()?.trimStart('.')
-        ?: error("Domain field should have the default value")
+    val domain = domain ?: error("Domain field should have the default value")
 
     val path = with(path) {
         val current = path ?: error("Path field should have the default value")
         if (current.endsWith('/')) current else "$path/"
     }
 
-    val host = requestUrl.host.toLowerCasePreservingASCIIRules()
     val requestPath = let {
         val pathInRequest = requestUrl.encodedPath
         if (pathInRequest.endsWith('/')) pathInRequest else "$pathInRequest/"
     }
 
-    if (host != domain && (hostIsIp(host) || !host.endsWith(".$domain"))) {
+    if (!requestUrl.host.matchesDomain(domain)) {
         return false
     }
 
@@ -62,8 +70,18 @@ public fun Cookie.matches(requestUrl: Url): Boolean {
     return !(secure && !requestUrl.protocol.isSecure())
 }
 
+internal fun String.matchesDomain(domain: String): Boolean {
+    val host = toLowerCasePreservingASCIIRules()
+    val normalizedDomain = domain.toLowerCasePreservingASCIIRules().trimStart('.')
+    if (normalizedDomain.isEmpty()) return false
+    if (host == normalizedDomain) return true
+    return !hostIsIp(host) && host.endsWith(".$normalizedDomain")
+}
+
 /**
  * Fills [Cookie] with default values from [requestUrl].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.cookies.fillDefaults)
  */
 public fun Cookie.fillDefaults(requestUrl: Url): Cookie {
     var result = this

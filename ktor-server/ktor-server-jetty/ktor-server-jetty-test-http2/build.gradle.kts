@@ -1,35 +1,25 @@
+/*
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
-kotlin.sourceSets {
-    jvmTest {
-        dependencies {
-            api(project(":ktor-server:ktor-server-test-base"))
-            api(project(":ktor-server:ktor-server-test-suites"))
-            api(libs.jetty.servlet)
-            api(project(":ktor-server:ktor-server-core"))
-            api(project(":ktor-server:ktor-server-jetty"))
-            api(project(":ktor-server:ktor-server-core", configuration = "testOutput"))
+import org.jetbrains.kotlin.gradle.targets.jvm.tasks.KotlinJvmTest
 
-            api(libs.logback.classic)
+plugins {
+    id("ktorbuild.project.internal")
+}
+
+kotlin {
+    sourceSets {
+        jvmTest.dependencies {
+            implementation(projects.ktorServerTestBase)
+            implementation(projects.ktorServerTestSuites)
+            implementation(libs.jetty.servlet)
+            implementation(projects.ktorServerCore)
+            implementation(projects.ktorServerJetty)
         }
     }
 }
 
-val jetty_alpn_boot_version: String? by extra
-dependencies {
-    if (jetty_alpn_boot_version != null) {
-        add("boot", libs.jetty.alpn.boot)
-    }
-}
-
-val jvmTest: org.jetbrains.kotlin.gradle.targets.jvm.tasks.KotlinJvmTest by tasks
-jvmTest.apply {
-    useJUnitPlatform()
-
+tasks.named<KotlinJvmTest>("jvmTest") {
     systemProperty("enable.http2", "true")
-    exclude("**/*StressTest*")
-
-    if (jetty_alpn_boot_version != null && JavaVersion.current() == JavaVersion.VERSION_1_8) {
-        val bootClasspath = configurations.named("boot").get().files
-        jvmArgs(bootClasspath.map { "-Xbootclasspath/p:${it.absolutePath}" }.iterator())
-    }
 }

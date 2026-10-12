@@ -1,54 +1,63 @@
-apply<test.server.TestServerPlugin>()
+/*
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
-val paths = listOf(
-    "/opt/homebrew/opt/curl/include/",
-    "/opt/local/include/",
-    "/usr/local/include/",
-    "/usr/include/",
-    "/usr/local/opt/curl/include/",
-    "/usr/include/x86_64-linux-gnu/",
-    "/usr/local/Cellar/curl/7.62.0/include/",
-    "/usr/local/Cellar/curl/7.63.0/include/",
-    "/usr/local/Cellar/curl/7.65.3/include/",
-    "/usr/local/Cellar/curl/7.66.0/include/",
-    "/usr/local/Cellar/curl/7.80.0/include/",
-    "/usr/local/Cellar/curl/7.80.0_1/include/",
-    "/usr/local/Cellar/curl/7.81.0/include/",
-    "desktop/interop/mingwX64/include/",
-)
+import ktorbuild.createCInterop
+import ktorbuild.targets.sourceSet
+import ktorbuild.vcpkg.*
+import org.jetbrains.kotlin.konan.target.*
 
 plugins {
+    id("ktorbuild.project.library")
     id("kotlinx-serialization")
+    id("test-server")
 }
 
+val interopDir = file("desktop/interop")
+val includeDir = interopDir.resolve("include")
+fun libraryPath(target: String) = interopDir.resolve("lib/$target")
+
 kotlin {
-    createCInterop("libcurl", listOf("macosX64", "linuxX64", "mingwX64")) {
-        defFile = File(projectDir, "desktop/interop/libcurl.def")
-        includeDirs.headerFilterOnly(paths)
-    }
-
-    createCInterop("libcurl", listOf("macosArm64")) {
-        defFile = File(projectDir, "desktop/interop/libcurl_arm64.def")
-        includeDirs.headerFilterOnly(paths)
-    }
-
-    createCInterop("libcurl", listOf("linuxArm64")) {
-        defFile = File(projectDir, "desktop/interop/libcurl_linux_arm64.def")
-        includeDirs.headerFilterOnly(listOf("desktop/interop/linuxArm64/include/"))
+    createCInterop("libcurl", sourceSet = "desktop") { target ->
+        includeDirs(includeDir)
+        extraOpts("-libraryPath", libraryPath(target))
     }
 
     sourceSets {
-        desktopMain {
-            dependencies {
-                api(project(":ktor-client:ktor-client-core"))
-                api(project(":ktor-http:ktor-http-cio"))
-            }
+        desktopMain.dependencies {
+            api(projects.ktorClientCore)
+            api(projects.ktorHttpCio)
         }
-        desktopTest {
-            dependencies {
-                api(project(":ktor-client:ktor-client-plugins:ktor-client-logging"))
-                api(project(":ktor-client:ktor-client-plugins:ktor-client-json"))
-            }
+        desktopTest.dependencies {
+            implementation(projects.ktorClientTests)
+            implementation(projects.ktorClientLogging)
+            implementation(projects.ktorClientJson)
+            implementation(libs.kotlinx.serialization.json)
         }
     }
 }
+
+//region Libcurl tasks
+// Register `libcurlUpdate` task updating libcurl binaries for the current host OS and architecture.
+// This task should be run on each platform separately to update libcurl for all platforms.
+// To build linuxArm64 binaries, the flag `-Pvcpkg.target=linux_arm64` should be passed.
+val target = providers.gradleProperty("vcpkg.target")
+    .map { KonanTarget.predefinedTargets.getValue(it) }
+    .orNull ?: HostManager.host
+
+val libcurlInstall = registerVcpkgInstallTask("libcurl", target) {
+    // Link against system zlib (except for Windows)
+    if (target != KonanTarget.MINGW_X64) overlayPorts.add("ports/zlib")
+}
+
+val libcurlUpdateHeaders = registerSyncHeadersTask(
+    "libcurlUpdateHeaders",
+    from = libcurlInstall,
+    into = includeDir,
+    library = "curl"
+)
+
+registerSyncBinariesTask("libcurlUpdate", from = libcurlInstall, into = libraryPath(target.sourceSet)) {
+    dependsOn(libcurlUpdateHeaders)
+}
+//endregion

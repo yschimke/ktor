@@ -6,6 +6,7 @@ package io.ktor.client.engine.okhttp
 
 import io.ktor.client.call.*
 import io.ktor.client.engine.*
+import io.ktor.client.io.*
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.sse.*
 import io.ktor.client.plugins.websocket.*
@@ -20,14 +21,13 @@ import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.internal.http.HttpMethod
-import okio.*
-import java.util.concurrent.*
-import kotlin.coroutines.*
+import okio.BufferedSource
+import okio.use
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.CoroutineContext
 
-@Suppress("KDocMissingDocumentation")
 @OptIn(InternalAPI::class, DelicateCoroutinesApi::class)
 public class OkHttpEngine(override val config: OkHttpConfig) : HttpClientEngineBase("ktor-okhttp") {
-
     override val supportedCapabilities: Set<HttpClientEngineCapability<*>> =
         setOf(HttpTimeoutCapability, WebSocketCapability, SSECapability)
 
@@ -41,14 +41,15 @@ public class OkHttpEngine(override val config: OkHttpConfig) : HttpClientEngineB
     private val clientCache = createLRUCache(::createOkHttpClient, {}, config.clientCacheSize)
 
     init {
-        val parent = super.coroutineContext[Job]!!
+        configurePlatform()
+
+        val parent = super.coroutineContext.job
         requestsJob = SilentSupervisor(parent)
         coroutineContext = super.coroutineContext + requestsJob
 
-        @OptIn(ExperimentalCoroutinesApi::class)
         GlobalScope.launch(super.coroutineContext, start = CoroutineStart.ATOMIC) {
             try {
-                requestsJob[Job]!!.join()
+                requestsJob.job.join()
             } finally {
                 clientCache.forEach { (_, client) ->
                     client.connectionPool.evictAll()
@@ -60,14 +61,13 @@ public class OkHttpEngine(override val config: OkHttpConfig) : HttpClientEngineB
 
     override suspend fun execute(data: HttpRequestData): HttpResponseData {
         val callContext = callContext()
-        val engineRequest = data.convertToOkHttpRequest(callContext)
+        val engineRequest = data.convertToOkHttpRequest(callContext, config)
 
         val requestEngine = clientCache[data.getCapabilityOrNull(HttpTimeoutCapability)]
             ?: error("OkHttpClient can't be constructed because HttpTimeout plugin is not installed")
 
         return when {
-            data.isUpgradeRequest() -> executeWebSocketRequest(requestEngine, engineRequest, callContext)
-            data.isSseRequest() -> executeServerSendEventsRequest(requestEngine, engineRequest, callContext)
+            data.isUpgradeRequest() -> executeWebSocketRequest(requestEngine, engineRequest, callContext, data)
             else -> executeHttpRequest(requestEngine, engineRequest, callContext, data)
         }
     }
@@ -80,34 +80,21 @@ public class OkHttpEngine(override val config: OkHttpConfig) : HttpClientEngineB
     private suspend fun executeWebSocketRequest(
         engine: OkHttpClient,
         engineRequest: Request,
-        callContext: CoroutineContext
+        callContext: CoroutineContext,
+        requestData: HttpRequestData,
     ): HttpResponseData {
         val requestTime = GMTDate()
+        val wsConfig = requestData.attributes[WEBSOCKETS_KEY]
         val session = OkHttpWebsocketSession(
-            engine,
-            config.webSocketFactory ?: engine,
-            engineRequest,
-            callContext
+            engine = engine,
+            webSocketFactory = config.webSocketFactory ?: engine,
+            engineRequest = engineRequest,
+            coroutineContext = callContext,
+            wsConfig = wsConfig,
         ).apply { start() }
 
         val originResponse = session.originResponse.await()
-        return buildResponseData(originResponse, requestTime, session, callContext)
-    }
-
-    private suspend fun executeServerSendEventsRequest(
-        engine: OkHttpClient,
-        engineRequest: Request,
-        callContext: CoroutineContext
-    ): HttpResponseData {
-        val requestTime = GMTDate()
-        val session = OkHttpSSESession(
-            engine,
-            engineRequest,
-            callContext
-        )
-
-        val originResponse = session.originResponse.await()
-        return buildResponseData(originResponse, requestTime, session, callContext)
+        return buildResponseData(originResponse, requestTime, session, callContext, requestData)
     }
 
     private suspend fun executeHttpRequest(
@@ -117,26 +104,45 @@ public class OkHttpEngine(override val config: OkHttpConfig) : HttpClientEngineB
         requestData: HttpRequestData
     ): HttpResponseData {
         val requestTime = GMTDate()
-        val response = engine.execute(engineRequest, requestData)
+        val response = engine.execute(engineRequest, requestData, callContext)
 
         val body = response.body
-        callContext[Job]!!.invokeOnCompletion { body?.close() }
+        // ResponseBody.close() may perform blocking I/O, so run it on the engine dispatcher instead of the
+        // thread completing callContext. Register the child now so requestsJob waits for cleanup during shutdown.
+        CoroutineScope(requestsJob + dispatcher + CoroutineName("okhttp-response-body-close"))
+            .launch(start = CoroutineStart.ATOMIC) {
+                try {
+                    callContext.job.join()
+                } finally {
+                    runCatching { body.close() }
+                }
+            }
 
-        val responseContent = body?.source()?.toChannel(callContext, requestData) ?: ByteReadChannel.Empty
-        return buildResponseData(response, requestTime, responseContent, callContext)
+        val responseContent = body.source().toChannel(callContext, requestData)
+        return buildResponseData(response, requestTime, responseContent, callContext, requestData)
     }
 
     private fun buildResponseData(
         response: Response,
         requestTime: GMTDate,
         body: Any,
-        callContext: CoroutineContext
+        callContext: CoroutineContext,
+        requestData: HttpRequestData
     ): HttpResponseData {
         val status = HttpStatusCode(response.code, response.message)
         val version = response.protocol.fromOkHttp()
         val headers = response.headers.fromOkHttp()
+        val responseBody: Any = when (body) {
+            is ByteReadChannel ->
+                requestData.attributes
+                    .getOrNull(ResponseAdapterAttributeKey)
+                    ?.adapt(requestData, status, headers, body, requestData.body, callContext)
+                    ?: body
 
-        return HttpResponseData(status, requestTime, headers, version, body, callContext)
+            else -> body
+        }
+
+        return HttpResponseData(status, requestTime, headers, version, responseBody, callContext)
     }
 
     private companion object {
@@ -151,10 +157,12 @@ public class OkHttpEngine(override val config: OkHttpConfig) : HttpClientEngineB
 
     private fun createOkHttpClient(timeoutExtension: HttpTimeoutConfig?): OkHttpClient {
         val builder = (config.preconfigured ?: okHttpClientPrototype).newBuilder()
-
-        builder.dispatcher(Dispatcher())
+        if (config.preconfigured == null) {
+            builder.dispatcher(Dispatcher())
+        }
         builder.apply(config.config)
         config.proxy?.let { builder.proxy(it) }
+        config.dns?.let { builder.dns(it) }
         timeoutExtension?.let {
             builder.setupTimeoutAttributes(it)
         }
@@ -163,23 +171,31 @@ public class OkHttpEngine(override val config: OkHttpConfig) : HttpClientEngineB
     }
 }
 
-@OptIn(DelicateCoroutinesApi::class)
-private fun BufferedSource.toChannel(context: CoroutineContext, requestData: HttpRequestData): ByteReadChannel =
-    GlobalScope.writer(context) {
+@OptIn(DelicateCoroutinesApi::class, InternalCoroutinesApi::class, InternalAPI::class)
+private fun BufferedSource.toChannel(context: CoroutineContext, requestData: HttpRequestData): ByteReadChannel {
+    val responseChannel = ByteChannel()
+    return GlobalScope.writer(context, responseChannel) {
         use { source ->
             var lastRead = 0
             while (source.isOpen && context.isActive && lastRead >= 0) {
-                channel.write { buffer ->
+                val bytesWritten = responseChannel.writeAvailable { buffer ->
                     lastRead = try {
                         source.read(buffer)
                     } catch (cause: Throwable) {
-                        throw mapExceptions(cause, requestData)
+                        val cancelOrCloseCause =
+                            runCatching { context.job.getCancellationException() }.getOrDefault(cause)
+                        throw mapExceptions(cancelOrCloseCause, requestData)
                     }
                 }
-                channel.flush()
+                responseChannel.rethrowCloseCauseIfNeeded()
+                if (bytesWritten == -1) break
+
+                responseChannel.flushWriteBuffer()
+                if (!responseChannel.hasFreeSpace) responseChannel.flush()
             }
         }
     }.channel
+}
 
 private fun mapExceptions(cause: Throwable, request: HttpRequestData): Throwable = when (cause) {
     is java.net.SocketTimeoutException -> SocketTimeoutException(request, cause)
@@ -187,20 +203,16 @@ private fun mapExceptions(cause: Throwable, request: HttpRequestData): Throwable
 }
 
 @OptIn(InternalAPI::class)
-private fun HttpRequestData.convertToOkHttpRequest(callContext: CoroutineContext): Request {
+private fun HttpRequestData.convertToOkHttpRequest(callContext: CoroutineContext, config: OkHttpConfig): Request {
     val builder = Request.Builder()
 
     with(builder) {
         url(url.toString())
 
-        mergeHeaders(headers, body) { key, value ->
-            if (key == HttpHeaders.ContentLength) return@mergeHeaders
-
-            addHeader(key, value)
-        }
+        forEachHeader(::addHeader)
 
         val bodyBytes = if (HttpMethod.permitsRequestBody(method.value)) {
-            body.convertToOkHttpBody(callContext)
+            body.convertToOkHttpBody(callContext, config)
         } else {
             null
         }
@@ -212,22 +224,40 @@ private fun HttpRequestData.convertToOkHttpRequest(callContext: CoroutineContext
 }
 
 @OptIn(DelicateCoroutinesApi::class)
-internal fun OutgoingContent.convertToOkHttpBody(callContext: CoroutineContext): RequestBody = when (this) {
+internal fun OutgoingContent.convertToOkHttpBody(
+    callContext: CoroutineContext,
+    config: OkHttpConfig,
+): RequestBody = when (this) {
     is OutgoingContent.ByteArrayContent -> bytes().let {
         it.toRequestBody(contentType.toString().toMediaTypeOrNull(), 0, it.size)
     }
-    is OutgoingContent.ReadChannelContent -> StreamRequestBody(contentLength) { readFrom() }
-    is OutgoingContent.WriteChannelContent -> {
-        StreamRequestBody(contentLength) { GlobalScope.writer(callContext) { writeTo(channel) }.channel }
+
+    is OutgoingContent.ReadChannelContent -> {
+        StreamRequestBody(
+            callContext,
+            contentLength,
+            config.duplexStreamingEnabled,
+        ) { readFrom() }
     }
+
+    is OutgoingContent.WriteChannelContent -> {
+        StreamRequestBody(
+            callContext,
+            contentLength,
+            config.duplexStreamingEnabled,
+        ) {
+            GlobalScope.writer(callContext) { writeTo(channel) }.channel
+        }
+    }
+
     is OutgoingContent.NoContent -> ByteArray(0).toRequestBody(null, 0, 0)
-    else -> throw UnsupportedContentTypeException(this)
+
+    is OutgoingContent.ContentWrapper -> delegate().convertToOkHttpBody(callContext, config)
+
+    is OutgoingContent.ProtocolUpgrade -> throw UnsupportedContentTypeException(this)
 }
 
-/**
- * Update [OkHttpClient.Builder] setting timeout configuration taken from
- * [HttpTimeout.HttpTimeoutCapabilityConfiguration].
- */
+/** Update [OkHttpClient.Builder] setting timeout configuration taken from [HttpTimeoutConfig]. */
 @OptIn(InternalAPI::class)
 private fun OkHttpClient.Builder.setupTimeoutAttributes(
     timeoutAttributes: HttpTimeoutConfig

@@ -1,14 +1,16 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.sessions
 
-import io.ktor.util.*
-import org.slf4j.*
-import java.security.*
-import javax.crypto.*
-import javax.crypto.spec.*
+import org.slf4j.LoggerFactory
+import java.security.MessageDigest
+import java.security.SecureRandom
+import javax.crypto.Cipher
+import javax.crypto.Mac
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * A transformer used to sign and encrypt/decrypt session data.
@@ -21,6 +23,8 @@ import javax.crypto.spec.*
  *
  * You have to provide keys of compatible sizes: 16, 24 and 32 for AES encryption.
  * For HmacSHA256 it is recommended a key of 32 bytes.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.sessions.SessionTransportTransformerEncrypt)
  *
  * @see [Sessions]
  *
@@ -49,12 +53,21 @@ public class SessionTransportTransformerEncrypt(
 
     /**
      * A size of the key used to encrypt session data.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.sessions.SessionTransportTransformerEncrypt.encryptionKeySize)
      */
     public val encryptionKeySize: Int get() = encryptionKeySpec.encoded.size
 
+    // AES CBC IV length always equals the cipher block size (16 bytes for AES),
+    // regardless of the key length. Using encryptionKeySize here used to break AES-256.
+    private val ivSize: Int = when (encryptionKeySpec.algorithm.uppercase()) {
+        "AES" -> 16
+        else -> Cipher.getInstance("$encryptAlgorithm/CBC/PKCS5PADDING").blockSize
+    }
+
     // Check that input keys are right
     init {
-        encrypt(ivGenerator(encryptionKeySize), byteArrayOf())
+        encrypt(ivGenerator(ivSize), byteArrayOf())
         mac(byteArrayOf())
     }
 
@@ -76,16 +89,17 @@ public class SessionTransportTransformerEncrypt(
         try {
             val encryptedAndMac = transportValue.substringAfterLast('/', "")
             val macHex = encryptedAndMac.substringAfterLast(':', "")
-            val encrypted = hex(encryptedAndMac.substringBeforeLast(':'))
-            val macCheck = hex(mac(encrypted)) == macHex
+            val encrypted = encryptedAndMac.substringBeforeLast(':').hexToByteArray()
+            val expectedMac = macHex.hexToByteArray()
+            val macCheck = MessageDigest.isEqual(mac(encrypted), expectedMac)
             if (!macCheck && !backwardCompatibleRead) {
                 return null
             }
 
-            val iv = hex(transportValue.substringBeforeLast('/'))
+            val iv = transportValue.substringBeforeLast('/').hexToByteArray()
             val decrypted = decrypt(iv, encrypted)
 
-            if (!macCheck && hex(mac(decrypted)) != macHex) {
+            if (!macCheck && !MessageDigest.isEqual(mac(decrypted), expectedMac)) {
                 return null
             }
 
@@ -101,11 +115,11 @@ public class SessionTransportTransformerEncrypt(
     }
 
     override fun transformWrite(transportValue: String): String {
-        val iv = ivGenerator(encryptionKeySize)
+        val iv = ivGenerator(ivSize)
         val decrypted = transportValue.toByteArray(charset)
         val encrypted = encrypt(iv, decrypted)
         val mac = mac(encrypted)
-        return "${hex(iv)}/${hex(encrypted)}:${hex(mac)}"
+        return "${iv.toHexString()}/${encrypted.toHexString()}:${mac.toHexString()}"
     }
 
     private fun encrypt(initVector: ByteArray, decrypted: ByteArray): ByteArray {

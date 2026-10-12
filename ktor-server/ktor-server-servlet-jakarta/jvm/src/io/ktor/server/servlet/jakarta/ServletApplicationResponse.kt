@@ -5,6 +5,7 @@
 package io.ktor.server.servlet.jakarta
 
 import io.ktor.http.*
+import io.ktor.http.content.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.response.*
@@ -17,6 +18,8 @@ public abstract class ServletApplicationResponse(
     protected val servletResponse: HttpServletResponse,
     private val managedByEngineHeaders: Set<String>
 ) : BaseApplicationResponse(call) {
+    private val headersBuilder = HeadersBuilder()
+
     override fun setStatus(statusCode: HttpStatusCode) {
         servletResponse.status = statusCode.value
     }
@@ -26,13 +29,13 @@ public abstract class ServletApplicationResponse(
 
         override fun engineAppendHeader(name: String, value: String) {
             servletResponse.addHeader(name, value)
+            headersBuilder.append(name, value)
         }
 
-        override fun getEngineHeaderNames(): List<String> = servletResponse.headerNames.toList()
-        override fun getEngineHeaderValues(name: String): List<String> = servletResponse.getHeaders(name).toList()
+        override fun getEngineHeaderNames(): List<String> = headersBuilder.names().toList()
+        override fun getEngineHeaderValues(name: String): List<String> = headersBuilder.getAll(name).orEmpty()
     }
 
-    @Suppress("DEPRECATION")
     protected abstract fun createResponseJob(): ReaderJob
 
     @Volatile
@@ -46,6 +49,15 @@ public abstract class ServletApplicationResponse(
         responseJob.value.channel
     }
 
+    @OptIn(InternalAPI::class)
+    override suspend fun respondWriteChannelContent(content: OutgoingContent.WriteChannelContent) {
+        if (content is OutputStreamContent) {
+            content.writeTo(servletResponse.outputStream)
+            return
+        }
+        super.respondWriteChannelContent(content)
+    }
+
     public final override suspend fun responseChannel(): ByteWriteChannel = responseChannel.value
 
     init {
@@ -55,7 +67,10 @@ public abstract class ServletApplicationResponse(
 
             if (responseJob.isInitialized()) {
                 responseJob.value.apply {
-                    channel.close()
+
+                    runCatching {
+                        channel.flushAndClose()
+                    }
                     join()
                 }
                 return@intercept

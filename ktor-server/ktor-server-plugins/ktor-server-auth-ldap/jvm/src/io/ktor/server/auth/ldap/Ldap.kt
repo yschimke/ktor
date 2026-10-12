@@ -14,8 +14,10 @@ import javax.naming.directory.*
  * This function accepts a credential and validates it against a specified LDAP server.
  *
  * To learn more about LDAP authentication in Ktor, see [LDAP](https://ktor.io/docs/ldap.html).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.auth.ldap.ldapAuthenticate)
  */
-public fun <K : Credential, P : Any> ldapAuthenticate(
+public fun <K : Any, P : Any> ldapAuthenticate(
     credential: K,
     ldapServerURL: String,
     ldapEnvironmentBuilder: (MutableMap<String, Any?>) -> Unit = {},
@@ -38,8 +40,10 @@ public fun <K : Credential, P : Any> ldapAuthenticate(
  * This function accepts [UserPasswordCredential] and validates it against a specified LDAP server.
  *
  * To learn more about LDAP authentication in Ktor, see [LDAP](https://ktor.io/docs/ldap.html).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.auth.ldap.ldapAuthenticate)
  */
-public fun <P : Principal> ldapAuthenticate(
+public fun <P : Any> ldapAuthenticate(
     credential: UserPasswordCredential,
     ldapServerURL: String,
     userDNFormat: String,
@@ -59,6 +63,8 @@ public fun <P : Principal> ldapAuthenticate(
  * This function accepts [UserPasswordCredential] and validates it against a specified LDAP server.
  *
  * To learn more about LDAP authentication in Ktor, see [LDAP](https://ktor.io/docs/ldap.html).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.auth.ldap.ldapAuthenticate)
  */
 public fun ldapAuthenticate(
     credential: UserPasswordCredential,
@@ -100,8 +106,8 @@ private fun ldapEscapeImpl(string: String, firstIndex: Int): String = buildStrin
                 append(character)
             } else {
                 character.toString().toByteArray().let { encoded ->
-                    for (byteIndex in 0 until encoded.size) {
-                        val unsignedValue = encoded[byteIndex].toInt() and 0xff
+                    for (element in encoded) {
+                        val unsignedValue = element.toInt() and 0xff
                         append('\\')
                         append(unsignedValue.toString(16).padStart(2, '0'))
                     }
@@ -119,10 +125,18 @@ private val ESCAPE_CHARACTERS = charArrayOf(' ', '"', '#', '+', ',', ';', '<', '
 
 private fun Char.shouldEscape(): Boolean = this.code.let { codepoint ->
     when (codepoint) {
-        in 0x3f..0x7e -> codepoint == 0x5c // the only forbidden character is backslash
-        in 0x2d..0x3a -> false // minus, point, slash (allowed), digits + colon :
-        in 0x24..0x2a -> false // $%&'()*
-        0x21 -> false // exclamation
+        // the only forbidden character is backslash
+        in 0x3f..0x7e -> codepoint == 0x5c
+
+        // minus, point, slash (allowed), digits + colon :
+        in 0x2d..0x3a -> false
+
+        // $%&'()*
+        in 0x24..0x2a -> false
+
+        // exclamation
+        0x21 -> false
+
         else -> true
     }
 }

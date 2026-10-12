@@ -1,28 +1,30 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
-// ktlint-disable experimental:argument-list-wrapping
 package io.ktor.server.sessions
 
 import io.ktor.http.*
-import io.ktor.server.sessions.serialization.*
 import io.ktor.util.*
-import kotlinx.serialization.*
-import kotlinx.serialization.json.*
-import java.lang.reflect.*
-import java.math.*
+import java.lang.reflect.ParameterizedType
+import java.lang.reflect.Type
+import java.math.BigDecimal
+import java.math.BigInteger
 import java.util.*
-import java.util.concurrent.*
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.reflect.*
-import kotlin.reflect.full.*
-import kotlin.reflect.jvm.*
+import kotlin.reflect.full.memberProperties
+import kotlin.reflect.full.superclasses
+import kotlin.reflect.jvm.javaType
+import kotlin.reflect.jvm.jvmErasure
 
 private const val TYPE_TOKEN_PARAMETER_NAME: String = "\$type"
 
 /**
  * A reflection-based session serializer. Can be used for backward compatibility with previous versions.
  * A serialized format is textual and optimized for size as it could be transferred via HTTP headers or cookies.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.sessions.reflectionSessionSerializer)
  *
  * @property T is a session instance class handled by this serializer
  */
@@ -32,6 +34,8 @@ public inline fun <reified T : Any> reflectionSessionSerializer(): SessionSerial
 /**
  * A reflection-based session serializer. Can be used for backward compatibility with previous versions.
  * A serialized format is textual and optimized for size as it could be transferred via HTTP headers or cookies.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.sessions.reflectionSessionSerializer)
  *
  * @property typeInfo is a session instance class handled by this serializer
  */
@@ -81,6 +85,8 @@ internal class SessionSerializerReflection<T : Any>(
                 { it },
                 {
                     when (it.kind) {
+                        @OptIn(ExperimentalContextParameters::class)
+                        KParameter.Kind.CONTEXT,
                         KParameter.Kind.INSTANCE,
                         KParameter.Kind.EXTENSION_RECEIVER -> findParticularType(type, bundle)
 
@@ -138,7 +144,9 @@ internal class SessionSerializerReflection<T : Any>(
         when {
             isListType(p.returnType) -> when {
                 value !is List<*> -> assignValue(instance, p, coerceType(p.returnType, value))
+
                 p is KMutableProperty1<X, *> -> p.setter.call(instance, coerceType(p.returnType, value))
+
                 originalValue is MutableList<*> -> {
                     originalValue.withUnsafe {
                         clear()
@@ -151,7 +159,9 @@ internal class SessionSerializerReflection<T : Any>(
 
             isSetType(p.returnType) -> when {
                 value !is Set<*> -> assignValue(instance, p, coerceType(p.returnType, value))
+
                 p is KMutableProperty1<X, *> -> p.setter.call(instance, coerceType(p.returnType, value))
+
                 originalValue is MutableSet<*> -> {
                     originalValue.withUnsafe {
                         clear()
@@ -164,7 +174,9 @@ internal class SessionSerializerReflection<T : Any>(
 
             isMapType(p.returnType) -> when {
                 value !is Map<*, *> -> assignValue(instance, p, coerceType(p.returnType, value))
+
                 p is KMutableProperty1<X, *> -> p.setter.call(instance, coerceType(p.returnType, value))
+
                 originalValue is MutableMap<*, *> -> {
                     originalValue.withUnsafe {
                         clear()
@@ -190,9 +202,11 @@ internal class SessionSerializerReflection<T : Any>(
     private fun coerceType(type: KType, value: Any?): Any? =
         when {
             value == null -> null
-            isListType(type) -> when {
-                value !is List<*> && value is Iterable<*> -> coerceType(type, value.toList())
-                value !is List<*> -> throw IllegalArgumentException(
+
+            isListType(type) -> when (value) {
+                !is List<*> if value is Iterable<*> -> coerceType(type, value.toList())
+
+                !is List<*> -> throw IllegalArgumentException(
                     "Couldn't coerce type ${value::class.java} to $type"
                 )
 
@@ -207,14 +221,15 @@ internal class SessionSerializerReflection<T : Any>(
                         .filterAssignable(type)
                         .firstHasNoArgConstructor()
                         ?.callNoArgConstructor()
-                        ?.withUnsafe { addAll(value.map { coerceType(contentType, it) }); this }
+                        ?.withUnsafe { apply { addAll(value.map { coerceType(contentType, it) }) } }
                         ?: throw IllegalArgumentException("Couldn't coerce type ${value::class.java} to $type")
                 }
             }
 
-            isSetType(type) -> when {
-                value !is Set<*> && value is Iterable<*> -> coerceType(type, value.toSet())
-                value !is Set<*> -> throw IllegalArgumentException("Couldn't coerce type ${value::class.java} to $type")
+            isSetType(type) -> when (value) {
+                !is Set<*> if value is Iterable<*> -> coerceType(type, value.toSet())
+
+                !is Set<*> -> throw IllegalArgumentException("Couldn't coerce type ${value::class.java} to $type")
 
                 else -> {
                     val contentType = type.arguments.single().type
@@ -227,13 +242,14 @@ internal class SessionSerializerReflection<T : Any>(
                         .filterAssignable(type)
                         .firstHasNoArgConstructor()
                         ?.callNoArgConstructor()
-                        ?.withUnsafe { addAll(value.map { coerceType(contentType, it) }); this }
+                        ?.withUnsafe { apply { addAll(value.map { coerceType(contentType, it) }) } }
                         ?: throw IllegalArgumentException("Couldn't coerce type ${value::class.java} to $type")
                 }
             }
 
             isMapType(type) -> when (value) {
                 !is Map<*, *> -> throw IllegalArgumentException("Couldn't coerce type ${value::class.java} to $type")
+
                 else -> {
                     val keyType = type.arguments[0].type
                         ?: throw IllegalArgumentException(
@@ -276,7 +292,9 @@ internal class SessionSerializerReflection<T : Any>(
             }
 
             type.toJavaClass() == Float::class.java && value is Number -> value.toFloat()
+
             type.toJavaClass() == UUID::class.java && value is String -> UUID.fromString(value)
+
             else -> value
         }
 
@@ -325,9 +343,13 @@ internal class SessionSerializerReflection<T : Any>(
         } else {
             when (value.getOrNull(1)) {
                 null, 'n' -> null
+
                 'i' -> value.drop(2).toInt()
+
                 'l' -> value.drop(2).toLong()
+
                 'f' -> value.drop(2).toDouble()
+
                 'b' -> when (value.getOrNull(2)) {
                     'o' -> when (value.getOrNull(3)) {
                         't' -> true
@@ -336,7 +358,9 @@ internal class SessionSerializerReflection<T : Any>(
                     }
 
                     'd' -> BigDecimal(value.drop(3))
+
                     'i' -> BigInteger(value.drop(3))
+
                     else -> throw IllegalArgumentException("Unsupported b-type ${value.take(3)}")
                 }
 
@@ -347,6 +371,7 @@ internal class SessionSerializerReflection<T : Any>(
                 }
 
                 's' -> value.drop(2)
+
                 'c' -> when (value.getOrNull(2)) {
                     'l' -> deserializeCollection(value.drop(3))
                     's' -> deserializeCollection(value.drop(3)).toSet()
@@ -355,7 +380,9 @@ internal class SessionSerializerReflection<T : Any>(
                 }
 
                 'm' -> deserializeMap(value.drop(2))
+
                 '#' -> deserializeObject(owner, value.drop(2))
+
                 else -> throw IllegalArgumentException("Unsupported type ${value.take(2)}")
             }
         }
@@ -363,25 +390,40 @@ internal class SessionSerializerReflection<T : Any>(
     private fun serializeValue(value: Any?): String =
         when (value) {
             null -> "#n"
+
             is Int -> "#i$value"
+
             is Long -> "#l$value"
+
             is Float -> "#f$value"
+
             is Double -> "#f$value"
+
             is Boolean -> "#bo${value.toString().first()}"
+
             is Char -> "#ch$value"
+
             is BigDecimal -> "#bd$value"
+
             is BigInteger -> "#bi$value"
+
             is Optional<*> -> when {
                 value.isPresent -> "#op${serializeValue(value.get())}"
                 else -> "#om"
             }
 
             is String -> "#s$value"
+
             is List<*> -> "#cl${serializeCollection(value)}"
+
             is Set<*> -> "#cs${serializeCollection(value)}"
+
             is Map<*, *> -> "#m${serializeMap(value)}"
+
             is Enum<*> -> "#s${value.name}"
+
             is UUID -> "#s$value"
+
             else -> "##${serializeClassInstance(value)}"
         }
 
@@ -443,22 +485,22 @@ internal class SessionSerializerReflection<T : Any>(
         .joinToString("&")
         .encodeURLQueryComponent()
 
-    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
+    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN", "RemoveRedundantQualifierName")
     private fun isListType(type: KType): Boolean {
         return getRawType(type)?.let { java.util.List::class.java.isAssignableFrom(it) } ?: false
     }
 
-    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
+    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN", "RemoveRedundantQualifierName")
     private fun isSetType(type: KType): Boolean {
         return getRawType(type)?.let { java.util.Set::class.java.isAssignableFrom(it) } ?: false
     }
 
-    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
+    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN", "RemoveRedundantQualifierName")
     private fun isEnumType(type: KType): Boolean {
         return getRawType(type)?.let { java.lang.Enum::class.java.isAssignableFrom(it) } ?: false
     }
 
-    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
+    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN", "RemoveRedundantQualifierName")
     private fun isMapType(type: KType): Boolean {
         return getRawType(type)?.let { java.util.Map::class.java.isAssignableFrom(it) } ?: false
     }

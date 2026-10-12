@@ -1,15 +1,17 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+* Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
 */
 
 package io.ktor.http
 
 /**
  * Represents an HTTP status code and description.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.HttpStatusCode)
+ *
  * @param value is a numeric code.
- * @param description is free form description of a status.
+ * @param description is a free form description of a status.
  */
-@Suppress("unused")
 public data class HttpStatusCode(val value: Int, val description: String) : Comparable<HttpStatusCode> {
     override fun toString(): String = "$value $description"
 
@@ -19,12 +21,14 @@ public data class HttpStatusCode(val value: Int, val description: String) : Comp
 
     /**
      * Returns a copy of `this` code with a description changed to [value].
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.HttpStatusCode.description)
      */
     public fun description(value: String): HttpStatusCode = copy(description = value)
 
     override fun compareTo(other: HttpStatusCode): Int = value - other.value
 
-    @Suppress("KDocMissingDocumentation", "PublicApiImplicitType")
+    @Suppress("KDocMissingDocumentation")
     public companion object {
         // =============================================================================================================
         // Disclaimer
@@ -87,6 +91,7 @@ public data class HttpStatusCode(val value: Int, val description: String) : Comp
         public val FailedDependency: HttpStatusCode = HttpStatusCode(424, "Failed Dependency")
         public val TooEarly: HttpStatusCode = HttpStatusCode(425, "Too Early")
         public val UpgradeRequired: HttpStatusCode = HttpStatusCode(426, "Upgrade Required")
+        public val PreconditionRequired: HttpStatusCode = HttpStatusCode(428, "Precondition Required")
         public val TooManyRequests: HttpStatusCode = HttpStatusCode(429, "Too Many Requests")
 
         public val RequestHeaderFieldTooLarge: HttpStatusCode =
@@ -106,6 +111,8 @@ public data class HttpStatusCode(val value: Int, val description: String) : Comp
 
         /**
          * All known status codes
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.HttpStatusCode.Companion.allStatusCodes)
          */
         public val allStatusCodes: List<HttpStatusCode> = allStatusCodes()
 
@@ -113,6 +120,8 @@ public data class HttpStatusCode(val value: Int, val description: String) : Comp
 
         /**
          * Creates an instance of [HttpStatusCode] with the given numeric value.
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.HttpStatusCode.Companion.fromValue)
          */
         public fun fromValue(value: Int): HttpStatusCode {
             return statusCodesMap[value] ?: HttpStatusCode(value, "Unknown Status Code")
@@ -154,6 +163,7 @@ internal fun allStatusCodes(): List<HttpStatusCode> = listOf(
     HttpStatusCode.Gone,
     HttpStatusCode.LengthRequired,
     HttpStatusCode.PreconditionFailed,
+    HttpStatusCode.PreconditionRequired,
     HttpStatusCode.PayloadTooLarge,
     HttpStatusCode.RequestURITooLong,
     HttpStatusCode.UnsupportedMediaType,
@@ -177,8 +187,10 @@ internal fun allStatusCodes(): List<HttpStatusCode> = listOf(
 )
 
 /**
- * Checks if a given status code is a success code according to HTTP standards.
+ * Checks if a given status code is a success code, according to HTTP standards.
  *
  * Codes from 200 to 299 are considered to be successful.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.isSuccess)
  */
 public fun HttpStatusCode.isSuccess(): Boolean = value in (200 until 300)

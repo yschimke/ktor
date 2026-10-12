@@ -1,13 +1,15 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.engine
 
-import java.util.concurrent.*
+import java.util.concurrent.TimeUnit
 
 /**
  * Stops this [ApplicationEngine]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.engine.stop)
  *
  * @param gracePeriod the maximum amount of time for activity to cool down
  * @param timeout the maximum amount of time to wait until server stops gracefully

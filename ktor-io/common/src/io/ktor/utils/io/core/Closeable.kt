@@ -1,29 +1,13 @@
+/*
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 package io.ktor.utils.io.core
 
-public expect interface Closeable {
-    public fun close()
-}
+import kotlin.use as stdlibUse
 
-public inline fun <C : Closeable, R> C.use(block: (C) -> R): R {
-    var closed = false
+public expect interface Closeable : AutoCloseable
 
-    return try {
-        block(this)
-    } catch (first: Throwable) {
-        try {
-            closed = true
-            close()
-        } catch (second: Throwable) {
-            first.addSuppressedInternal(second)
-        }
-
-        throw first
-    } finally {
-        if (!closed) {
-            close()
-        }
-    }
-}
-
-@PublishedApi
-internal expect fun Throwable.addSuppressedInternal(other: Throwable)
+@Suppress("DeprecatedCallableAddReplaceWith")
+@Deprecated("Use stdlib implementation instead. Remove import of this function")
+public inline fun <T : Closeable?, R> T.use(block: (T) -> R): R = stdlibUse(block)

@@ -10,7 +10,7 @@ import org.apache.velocity.app.*
 import org.apache.velocity.tools.*
 import org.apache.velocity.tools.config.*
 
-private val ENGINE_CONFIG_KEY = "ENGINE_CONFIG"
+private const val ENGINE_CONFIG_KEY = "ENGINE_CONFIG"
 
 public fun EasyFactoryConfiguration.engine(configure: VelocityEngine.() -> Unit) {
     data(ENGINE_CONFIG_KEY, configure)
@@ -19,6 +19,8 @@ public fun EasyFactoryConfiguration.engine(configure: VelocityEngine.() -> Unit)
 /**
  * A plugin that allows you to add standard and custom Velocity tools.
  * You can learn more from [Velocity](https://ktor.io/docs/velocity.html).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.velocity.VelocityTools)
  */
 @Suppress("UNCHECKED_CAST")
 public val VelocityTools: ApplicationPlugin<EasyFactoryConfiguration> = createApplicationPlugin(

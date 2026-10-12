@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.engine.cio
@@ -9,23 +9,31 @@ import io.ktor.client.network.sockets.*
 import io.ktor.client.plugins.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
+import io.ktor.client.test.base.*
 import io.ktor.client.tests.utils.*
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
+import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.utils.io.*
+import io.mockk.mockkStatic
+import io.mockk.verify
 import kotlinx.coroutines.*
-import kotlinx.coroutines.debug.junit5.*
-import java.nio.channels.*
+import kotlinx.coroutines.debug.junit5.CoroutinesTimeout
+import java.net.InetAddress
+import java.nio.channels.UnresolvedAddressException
 import kotlin.test.*
-import kotlin.test.Ignore
-import kotlin.test.Test
+import kotlin.time.Duration.Companion.seconds
 
 @CoroutinesTimeout(60_000)
 class CIORequestTest : TestWithKtor() {
     private val testSize = 2 * 1024
+
+    private val firstPipelineRequestReceived = CompletableDeferred<Unit>()
+    private val secondPipelineRequestReceived = CompletableDeferred<Unit>()
 
     override val server: EmbeddedServer<*, *> = embeddedServer(Netty, serverPort) {
         routing {
@@ -45,10 +53,100 @@ class CIORequestTest : TestWithKtor() {
             get("/echo") {
                 call.respond("OK")
             }
+            get("/echo-body") {
+                call.respondText(call.receiveText())
+            }
             get("/delay") {
-                delay(1000)
+                delay(1.seconds)
                 call.respond("OK")
             }
+            get("/pipeline") {
+                when (call.parameters["request"]) {
+                    "first" -> {
+                        firstPipelineRequestReceived.complete(Unit)
+                        secondPipelineRequestReceived.await()
+                    }
+
+                    "second" -> secondPipelineRequestReceived.complete(Unit)
+                }
+                call.respond("OK")
+            }
+        }
+    }
+
+    @Test
+    fun testTwoPipelinedRequests() = testWithEngine(CIO) {
+        config {
+            defaultRequest { port = serverPort }
+            engine {
+                pipelining = true
+                endpoint {
+                    maxConnectionsPerRoute = 1
+                }
+            }
+        }
+
+        test { client ->
+            val responses = coroutineScope {
+                val firstRequest = async { client.get("/pipeline?request=first").bodyAsText() }
+                firstPipelineRequestReceived.await()
+                val secondRequest = async { client.get("/pipeline?request=second").bodyAsText() }
+                awaitAll(firstRequest, secondRequest)
+            }
+            assertEquals(listOf("OK", "OK"), responses)
+        }
+    }
+
+    @Test
+    fun testPipelinedRequestBodiesAreWrittenSequentially() = testWithEngine(CIO) {
+        config {
+            defaultRequest { port = serverPort }
+            engine {
+                pipelining = true
+                endpoint {
+                    maxConnectionsPerRoute = 1
+                }
+            }
+        }
+
+        test { client ->
+            fun HttpRequestBuilder.setBody(value: String, beforeWrite: suspend () -> Unit) {
+                val body = object : OutgoingContent.WriteChannelContent() {
+                    override val contentLength: Long = value.length.toLong()
+
+                    override suspend fun writeTo(channel: ByteWriteChannel) {
+                        beforeWrite()
+                        channel.writeStringUtf8(value)
+                    }
+                }
+                setBody(body)
+            }
+
+            val firstBodyStarted = CompletableDeferred<Unit>()
+            val secondBodyStarted = CompletableDeferred<Unit>()
+
+            val responses = coroutineScope {
+                val firstRequest = async {
+                    client.get("/echo-body") {
+                        setBody("first") {
+                            firstBodyStarted.complete(Unit)
+                            assertNull(
+                                withTimeoutOrNull(1.seconds) { secondBodyStarted.await() },
+                                "Second body write shouldn't be started",
+                            )
+                        }
+                    }.bodyAsText()
+                }
+                firstBodyStarted.await()
+                val secondRequest = async {
+                    client.get("/echo-body") {
+                        setBody("second") { secondBodyStarted.complete(Unit) }
+                    }.bodyAsText()
+                }
+                awaitAll(firstRequest, secondRequest)
+            }
+
+            assertEquals(listOf("first", "second"), responses)
         }
     }
 
@@ -156,6 +254,16 @@ class CIORequestTest : TestWithKtor() {
             assertNotNull(fail)
             if (fail !is ConnectTimeoutException && fail !is UnresolvedAddressException) {
                 fail("Expected ConnectTimeoutException or UnresolvedAddressException, got $fail", fail)
+            }
+        }
+    }
+
+    @Test
+    fun testInetAddressRetrievedOnce() = testWithEngine(CIO) {
+        test { client ->
+            mockkStatic(InetAddress::getByName) {
+                client.prepareGet { url(path = "/echo", port = serverPort) }.execute()
+                verify(exactly = 1) { InetAddress.getByName(any()) }
             }
         }
     }

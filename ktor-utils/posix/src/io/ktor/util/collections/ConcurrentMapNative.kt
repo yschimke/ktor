@@ -1,6 +1,5 @@
-// ktlint-disable filename
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.util.collections
@@ -10,6 +9,8 @@ import io.ktor.utils.io.locks.*
 
 /**
  * Ktor concurrent map implementation. Please do not use it.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.collections.ConcurrentMap)
  */
 @OptIn(InternalAPI::class)
 public actual class ConcurrentMap<Key, Value> public actual constructor(
@@ -20,6 +21,8 @@ public actual class ConcurrentMap<Key, Value> public actual constructor(
 
     /**
      * Computes [block] and inserts result in map. The [block] will be evaluated at most once.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.collections.ConcurrentMap.computeIfAbsent)
      */
     public actual fun computeIfAbsent(key: Key, block: () -> Value): Value = synchronized(lock) {
         if (delegate.containsKey(key)) return delegate[key]!!
@@ -29,7 +32,7 @@ public actual class ConcurrentMap<Key, Value> public actual constructor(
     }
 
     actual override val size: Int
-        get() = delegate.size
+        get() = synchronized(lock) { delegate.size }
 
     actual override fun containsKey(key: Key): Boolean = synchronized(lock) { delegate.containsKey(key) }
 
@@ -37,16 +40,16 @@ public actual class ConcurrentMap<Key, Value> public actual constructor(
 
     actual override fun get(key: Key): Value? = synchronized(lock) { delegate[key] }
 
-    actual override fun isEmpty(): Boolean = delegate.isEmpty()
+    actual override fun isEmpty(): Boolean = synchronized(lock) { delegate.isEmpty() }
 
     actual override val entries: MutableSet<MutableMap.MutableEntry<Key, Value>>
-        get() = synchronized(lock) { delegate.entries }
+        get() = synchronized(lock) { LinkedHashMap(delegate).entries }
 
     actual override val keys: MutableSet<Key>
-        get() = synchronized(lock) { delegate.keys }
+        get() = synchronized(lock) { LinkedHashSet(delegate.keys) }
 
     actual override val values: MutableCollection<Value>
-        get() = synchronized(lock) { delegate.values }
+        get() = synchronized(lock) { ArrayList(delegate.values) }
 
     actual override fun clear() {
         synchronized(lock) {
@@ -73,9 +76,8 @@ public actual class ConcurrentMap<Key, Value> public actual constructor(
     override fun hashCode(): Int = synchronized(lock) { delegate.hashCode() }
 
     override fun equals(other: Any?): Boolean = synchronized(lock) {
-        if (other !is Map<*, *>) return false
-        return other == delegate
+        return other is Map<*, *> && other == delegate
     }
 
-    override fun toString(): String = "ConcurrentMapJs by $delegate"
+    override fun toString(): String = "ConcurrentMapNative by $delegate"
 }

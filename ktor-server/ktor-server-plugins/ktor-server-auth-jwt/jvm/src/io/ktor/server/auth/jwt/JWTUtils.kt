@@ -15,17 +15,39 @@ import io.ktor.http.auth.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
 import io.ktor.server.request.*
+import io.ktor.utils.io.*
+import kotlinx.coroutines.*
+import java.io.IOException
 import java.security.interfaces.*
 import java.util.*
 
 internal fun Jwk.makeAlgorithm(): Algorithm = when (algorithm) {
     "RS256" -> Algorithm.RSA256(publicKey as RSAPublicKey, null)
+
     "RS384" -> Algorithm.RSA384(publicKey as RSAPublicKey, null)
+
     "RS512" -> Algorithm.RSA512(publicKey as RSAPublicKey, null)
+
     "ES256" -> Algorithm.ECDSA256(publicKey as ECPublicKey, null)
+
     "ES384" -> Algorithm.ECDSA384(publicKey as ECPublicKey, null)
+
     "ES512" -> Algorithm.ECDSA512(publicKey as ECPublicKey, null)
-    null -> Algorithm.RSA256(publicKey as RSAPublicKey, null)
+
+    null -> when (type) {
+        "EC" -> {
+            val ecKey = publicKey as ECPublicKey
+            when (ecKey.params.order.bitLength()) {
+                in 249..258 -> Algorithm.ECDSA256(ecKey, null)
+                in 379..388 -> Algorithm.ECDSA384(ecKey, null)
+                in 518..527 -> Algorithm.ECDSA512(ecKey, null)
+                else -> Algorithm.ECDSA256(ecKey, null)
+            }
+        }
+
+        else -> Algorithm.RSA256(publicKey as RSAPublicKey, null)
+    }
+
     else -> throw IllegalArgumentException("Unsupported algorithm $algorithm")
 }
 
@@ -43,7 +65,19 @@ internal fun AuthenticationContext.bearerChallenge(
     }
 }
 
-internal fun getVerifier(
+/**
+ * Checks whether the signing key lookup failed because the provider returned unusable JWK data.
+ */
+@InternalAPI
+public fun SigningKeyNotFoundException.causedByProviderSentInvalidJwk(): Boolean =
+    this is NetworkException || message?.contains("Failed to parse") == true
+
+@OptIn(InternalAPI::class)
+internal fun JwkException.isJwkProviderFailure(): Boolean =
+    this is RateLimitReachedException ||
+        (this is SigningKeyNotFoundException && causedByProviderSentInvalidJwk())
+
+internal suspend fun getVerifier(
     jwkProvider: JwkProvider,
     issuer: String?,
     token: HttpAuthHeader,
@@ -52,8 +86,12 @@ internal fun getVerifier(
 ): JWTVerifier? {
     val jwk = token.getBlob(schemes)?.let { blob ->
         try {
-            jwkProvider.get(JWT.decode(blob).keyId)
+            val keyId = JWT.decode(blob).keyId
+            withContext(Dispatchers.IO) { jwkProvider.get(keyId) }
         } catch (cause: JwkException) {
+            if (cause.isJwkProviderFailure()) {
+                throw cause
+            }
             JWTLogger.trace("Failed to get JWK", cause)
             null
         } catch (cause: JWTDecodeException) {
@@ -75,7 +113,7 @@ internal fun getVerifier(
     }.apply(jwtConfigure).build()
 }
 
-internal fun getVerifier(
+internal suspend fun getVerifier(
     jwkProvider: JwkProvider,
     token: HttpAuthHeader,
     schemes: JWTAuthSchemes,
@@ -89,18 +127,24 @@ internal suspend fun verifyAndValidate(
     jwtVerifier: JWTVerifier?,
     token: HttpAuthHeader,
     schemes: JWTAuthSchemes,
-    validate: suspend ApplicationCall.(JWTCredential) -> Principal?
-): Principal? {
+    validate: suspend ApplicationCall.(JWTCredential) -> Any?
+): Any? {
     val jwt = try {
         token.getBlob(schemes)?.let { jwtVerifier?.verify(it) }
     } catch (cause: JWTVerificationException) {
-        JWTLogger.trace("Token verification failed", cause)
+        JWTLogger.debug("JWT verification failed: {}", cause.message, cause)
         null
     } ?: return null
 
     val payload = jwt.parsePayload()
     val credentials = JWTCredential(payload)
-    return validate(call, credentials)
+    val principal = validate(call, credentials)
+
+    if (principal == null) {
+        JWTLogger.debug("JWT validation failed: Custom validation returned null")
+    }
+
+    return principal
 }
 
 internal fun HttpAuthHeader.getBlob(schemes: JWTAuthSchemes) = when {

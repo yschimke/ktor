@@ -9,18 +9,50 @@ import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.websocket.cio.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import io.ktor.network.selector.*
+import io.ktor.network.sockets.*
 import io.ktor.server.application.*
+import io.ktor.server.http.*
 import io.ktor.server.netty.*
+import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.test.base.*
-import io.ktor.server.testing.*
 import io.ktor.server.testing.suites.*
 import io.ktor.server.websocket.*
+import io.ktor.utils.io.*
 import io.ktor.websocket.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
+import io.netty.bootstrap.Bootstrap
+import io.netty.buffer.ByteBuf
+import io.netty.buffer.Unpooled
+import io.netty.channel.ChannelHandlerContext
+import io.netty.channel.ChannelInboundHandlerAdapter
+import io.netty.channel.MultiThreadIoEventLoopGroup
+import io.netty.channel.epoll.Epoll
+import io.netty.channel.kqueue.KQueue
+import io.netty.channel.nio.NioEventLoopGroup
+import io.netty.channel.nio.NioIoHandler
+import io.netty.channel.socket.nio.NioDatagramChannel
+import io.netty.handler.codec.http.HttpResponseStatus
+import io.netty.handler.codec.http2.*
+import io.netty.handler.codec.http2.Http2CodecUtil.readUnsignedInt
+import io.netty.handler.codec.http3.*
+import io.netty.handler.codec.quic.QuicChannel
+import io.netty.handler.codec.quic.QuicSslContextBuilder
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.consumeAsFlow
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import java.net.InetSocketAddress
+import java.net.StandardSocketOptions
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import kotlin.test.*
+import kotlin.time.Duration.Companion.milliseconds
 
 class NettyCompressionTest : CompressionTestSuite<NettyApplicationEngine, NettyApplicationEngine.Configuration>(Netty) {
     init {
@@ -37,13 +69,23 @@ class NettyContentTest : ContentTestSuite<NettyApplicationEngine, NettyApplicati
         enableSsl = true
     }
 
+    @Ignore // KTOR-9263
+    override fun funkyChunked() {
+        super.funkyChunked()
+    }
+
     override fun configure(configuration: NettyApplicationEngine.Configuration) {
         configuration.shareWorkGroup = true
     }
 }
 
 class NettyHttpServerCommonTest :
-    HttpServerCommonTestSuite<NettyApplicationEngine, NettyApplicationEngine.Configuration>(Netty)
+    HttpServerCommonTestSuite<NettyApplicationEngine, NettyApplicationEngine.Configuration>(Netty) {
+    init {
+        enableSsl = true
+        enableHttp2 = true
+    }
+}
 
 class NettyHttpServerJvmTest :
     HttpServerJvmTestSuite<NettyApplicationEngine, NettyApplicationEngine.Configuration>(Netty) {
@@ -56,9 +98,6 @@ class NettyHttpServerJvmTest :
         configuration.tcpKeepAlive = true
     }
 }
-
-class NettyHttp2ServerCommonTest :
-    HttpServerCommonTestSuite<NettyApplicationEngine, NettyApplicationEngine.Configuration>(Netty)
 
 class NettyHttp2ServerJvmTest :
     HttpServerJvmTestSuite<NettyApplicationEngine, NettyApplicationEngine.Configuration>(Netty) {
@@ -85,7 +124,7 @@ class NettyDisabledHttp2Test :
     }
 
     @Test
-    fun testRequestWithDisabledHttp2() {
+    fun testRequestWithDisabledHttp2() = runTest {
         createAndStartServer {
             application.routing {
                 get("/") {
@@ -113,7 +152,7 @@ class NettySustainabilityTest : SustainabilityTestSuite<NettyApplicationEngine, 
     }
 
     @Test
-    fun testRawWebSocketFreeze() {
+    fun testRawWebSocketFreeze() = runTest {
         createAndStartServer {
             application.install(WebSockets)
             webSocket("/ws") {
@@ -129,10 +168,8 @@ class NettySustainabilityTest : SustainabilityTestSuite<NettyApplicationEngine, 
 
         var count = 0
 
-        runBlocking {
-            client.wsRaw(path = "/ws", port = port) {
-                incoming.consumeAsFlow().collect { count++ }
-            }
+        client.wsRaw(path = "/ws", port = port) {
+            incoming.consumeAsFlow().collect { count++ }
         }
 
         assertEquals(11, count)
@@ -151,5 +188,860 @@ class NettyServerPluginsTest : ServerPluginsTestSuite<NettyApplicationEngine, Ne
     init {
         enableSsl = false
         enableHttp2 = false
+    }
+}
+
+class NettyHooksTest : HooksTestSuite<NettyApplicationEngine, NettyApplicationEngine.Configuration>(Netty)
+
+class NettyH2cServerJvmTest :
+    HttpServerJvmTestSuite<NettyApplicationEngine, NettyApplicationEngine.Configuration>(Netty) {
+
+    init {
+        enableSsl = false
+        enableHttp2 = true
+    }
+
+    override fun configure(configuration: NettyApplicationEngine.Configuration) {
+        configuration.enableH2c = true
+    }
+}
+
+class NettyH2cEnabledTest :
+    EngineTestBase<NettyApplicationEngine, NettyApplicationEngine.Configuration>(Netty) {
+
+    init {
+        enableSsl = false
+        enableHttp2 = true
+    }
+
+    override fun configure(configuration: NettyApplicationEngine.Configuration) {
+        configuration.enableH2c = true
+    }
+
+    class Http2Frame(
+        val frameType: Byte,
+        val flags: Http2Flags,
+        val streamId: Int,
+        val payload: ByteArray,
+    )
+
+    companion object {
+        private const val TEST_SERVER_HOST = "127.0.0.1"
+        private const val PATH = "/"
+        private const val BODY = "Hello world"
+        private const val STREAM_ID = 3
+    }
+
+    @Test
+    fun testConnectionUpgradeH2cRequest() = runTest {
+        h2cTest { writer, reader ->
+            writer.writeStringUtf8("GET $PATH HTTP/1.1\r\n")
+            writer.writeStringUtf8("Host: ${TEST_SERVER_HOST}\r\n")
+            writer.writeStringUtf8("Connection: Upgrade, HTTP2-Settings\r\n")
+            writer.writeStringUtf8("Upgrade: h2c\r\n")
+            writer.writeStringUtf8("HTTP2-Settings: AAMAAABkAAQCAAAAAAIAAAAA\r\n")
+            writer.writeStringUtf8("\r\n")
+            writer.flush()
+
+            val response = reader.readHttp1Headers()
+            val responseLower = response.lowercase()
+
+            assertTrue(response.startsWith("HTTP/1.1 101"))
+            assertTrue(responseLower.contains("connection: upgrade"))
+            assertTrue(responseLower.contains("upgrade: h2c"))
+        }
+    }
+
+    @Test
+    fun testSendH2cRequestWithConnectionPreface() = runTest {
+        h2cTest { writer, reader ->
+            // send connection preset
+            writer.writeHttp2ConnectionPreface()
+
+            // send settings frame
+            writer.writeFully(http2SettingsFrame(ack = false))
+            writer.flush()
+
+            // read server settings
+            val http2ServerSettingsFrame = reader.readHttp2Frame()
+            assertEquals(Http2FrameTypes.SETTINGS, http2ServerSettingsFrame.frameType)
+
+            // read server ack
+            val http2ServerAckFrame = reader.readHttp2Frame()
+            assertEquals(Http2FrameTypes.SETTINGS, http2ServerAckFrame.frameType)
+            assertTrue(http2ServerAckFrame.flags.ack())
+
+            // send settings ack frame
+            writer.writeFully(http2SettingsFrame(ack = true))
+            writer.flush()
+
+            // send headers frame
+            writer.writeFully(http2HeadersFrame())
+            writer.flush()
+
+            reader.readHeaderFrame()
+
+            reader.readDataFrame()
+        }
+    }
+
+    private suspend fun ByteWriteChannel.writeHttp2ConnectionPreface() {
+        writeStringUtf8("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+        flush()
+    }
+
+    private suspend fun ByteReadChannel.readHttp2Frame(): Http2Frame {
+        val dataHeaderBuf = Unpooled.wrappedBuffer(readByteArray(9))
+
+        val payloadLength = dataHeaderBuf.readUnsignedMedium()
+        val frameType = dataHeaderBuf.readByte()
+        val flags = Http2Flags(dataHeaderBuf.readUnsignedByte())
+        val streamId = readUnsignedInt(dataHeaderBuf)
+        val payload = readByteArray(payloadLength)
+
+        return Http2Frame(
+            frameType = frameType,
+            flags = flags,
+            streamId = streamId,
+            payload = payload
+        )
+    }
+
+    private suspend fun ByteReadChannel.readHeaderFrame() {
+        val http2Frame = readHttp2Frame()
+
+        val payloadBuff = Unpooled.wrappedBuffer(http2Frame.payload)
+        val decoder = DefaultHttp2HeadersDecoder(true)
+        val decodedHeaders = decoder.decodeHeaders(STREAM_ID, payloadBuff)
+
+        assertEquals(Http2FrameTypes.HEADERS, http2Frame.frameType)
+        assertEquals(STREAM_ID, http2Frame.streamId)
+        assertTrue(http2Frame.flags.endOfHeaders())
+        assertEquals(decodedHeaders.status(), HttpResponseStatus.OK.codeAsText())
+    }
+
+    private suspend fun ByteReadChannel.readDataFrame() {
+        val http2Frame = readHttp2Frame()
+
+        val data = String(http2Frame.payload, Charsets.UTF_8)
+
+        assertEquals(Http2FrameTypes.DATA, http2Frame.frameType)
+        assertEquals(STREAM_ID, http2Frame.streamId)
+        assertTrue(http2Frame.flags.endOfStream())
+        assertEquals(BODY, data)
+    }
+
+    private fun http2HeadersFrame(): ByteArray {
+        val headers = DefaultHttp2Headers().also {
+            it.method("GET")
+            it.path("/")
+            it.scheme("http")
+        }
+
+        val encodedHeaders = Unpooled.buffer()
+        val encoder = DefaultHttp2HeadersEncoder()
+        encoder.encodeHeaders(STREAM_ID, headers, encodedHeaders)
+
+        return http2Frame(
+            payload = encodedHeaders,
+            type = Http2FrameTypes.HEADERS,
+            flags = Http2Flags()
+                .endOfHeaders(true)
+                .endOfStream(true),
+            streamId = STREAM_ID
+        )
+    }
+
+    private fun http2SettingsFrame(ack: Boolean) = http2Frame(
+        payload = null,
+        type = Http2FrameTypes.SETTINGS,
+        flags = Http2Flags().ack(ack),
+        streamId = 0
+    )
+
+    private fun http2Frame(payload: ByteBuf?, type: Byte, flags: Http2Flags, streamId: Int): ByteArray {
+        val buf = Unpooled.buffer()
+
+        val payloadLength = payload?.readableBytes() ?: 0
+
+        buf.writeMedium(payloadLength)
+        buf.writeByte(type.toInt())
+        buf.writeByte(flags.value().toInt())
+        buf.writeInt(streamId)
+        payload?.let {
+            buf.writeBytes(it)
+        }
+
+        val frame = ByteArray(buf.readableBytes())
+        buf.readBytes(frame)
+
+        return frame
+    }
+
+    private fun h2cTest(block: suspend (ByteWriteChannel, ByteReadChannel) -> Unit) = runTest {
+        val server = createServer {
+            routing {
+                get(PATH) {
+                    call.respondText(BODY)
+                }
+            }
+        }
+        server.start(wait = false)
+
+        SelectorManager().use {
+            aSocket(it).tcp().connect(TEST_SERVER_HOST, port).use { socket ->
+                val writeChannel = socket.openWriteChannel()
+                val readChannel = socket.openReadChannel()
+                block(writeChannel, readChannel)
+            }
+        }
+
+        server.stop()
+    }
+
+    private suspend fun ByteReadChannel.readHttp1Headers(maxBytes: Int = 8192): String {
+        val buf = ByteArray(maxBytes)
+        var total = 0
+        while (true) {
+            val n = readAvailable(buf, total, buf.size - total)
+            if (n == -1) error("Connection closed before headers complete")
+            total += n
+            val s = buf.decodeToString(0, total)
+            val end = s.indexOf("\r\n\r\n")
+            if (end >= 0) return s.take(end + 4)
+            require(total < maxBytes) { "HTTP/1.1 headers exceed $maxBytes bytes" }
+        }
+    }
+}
+
+class NettyH2cWithSslTest :
+    HttpServerJvmTestSuite<NettyApplicationEngine, NettyApplicationEngine.Configuration>(Netty) {
+
+    init {
+        enableSsl = true
+        enableHttp2 = true
+    }
+
+    override fun configure(configuration: NettyApplicationEngine.Configuration) {
+        configuration.enableH2c = true
+    }
+
+    @Test
+    fun testH2cConnectorAndSslConnectorServeConcurrently() = runTest {
+        createAndStartServer {
+            get("/") {
+                call.respondText("Hello, world")
+            }
+        }
+
+        withHttp1("http://127.0.0.1:$port/", port, {}) {
+            assertEquals("Hello, world", bodyAsText())
+            assertEquals(HttpProtocolVersion.HTTP_1_1, version)
+        }
+
+        withHttp1("https://127.0.0.1:$sslPort/", sslPort, {}) {
+            assertEquals("Hello, world", bodyAsText())
+        }
+
+        withHttp2("https://127.0.0.1:$sslPort/", sslPort, {}) {
+            assertEquals("Hello, world", bodyAsText())
+            assertEquals(HttpProtocolVersion.HTTP_2_0, version)
+        }
+    }
+}
+
+class NettyH2cFlushTest :
+    EngineTestBase<NettyApplicationEngine, NettyApplicationEngine.Configuration>(Netty) {
+
+    init {
+        enableSsl = false
+        enableHttp2 = true
+    }
+
+    override fun configure(configuration: NettyApplicationEngine.Configuration) {
+        configuration.enableH2c = true
+    }
+
+    companion object {
+        private const val SSE_STREAM_ID = 3
+        private const val REGULAR_STREAM_ID = 5
+    }
+
+    @Test
+    fun testH2FlushDuringActiveSSE() = runTest {
+        val server = createServer {
+            routing {
+                get("/sse") {
+                    call.respond(object : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
+                        override val contentType = ContentType.Text.EventStream
+                        override suspend fun writeTo(channel: ByteWriteChannel) {
+                            channel.writeStringUtf8("data: active\n\n")
+                            channel.flush()
+                            delay(30_000) // keep response open — SSE stays active
+                        }
+                    })
+                }
+                get("/regular") {
+                    call.respondText("ok")
+                }
+            }
+        }
+        server.start(wait = false)
+
+        try {
+            SelectorManager().use { selector ->
+                aSocket(selector).tcp().connect("127.0.0.1", port).use { socket ->
+                    val writer = socket.openWriteChannel()
+                    val reader = socket.openReadChannel()
+
+                    // HTTP/2 connection preface
+                    writer.writeStringUtf8("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+                    writer.flush()
+
+                    // Send client SETTINGS
+                    writer.writeFully(h2Frame(null, Http2FrameTypes.SETTINGS, Http2Flags(), 0))
+                    writer.flush()
+
+                    // Read server SETTINGS
+                    val serverSettings = reader.readH2Frame()
+                    assertEquals(Http2FrameTypes.SETTINGS, serverSettings.frameType)
+
+                    // Read server SETTINGS ACK
+                    val serverAck = reader.readH2Frame()
+                    assertEquals(Http2FrameTypes.SETTINGS, serverAck.frameType)
+                    assertTrue(serverAck.flags.ack())
+
+                    // Send client SETTINGS ACK
+                    writer.writeFully(h2Frame(null, Http2FrameTypes.SETTINGS, Http2Flags().ack(true), 0))
+                    writer.flush()
+
+                    // Send SSE request on stream 3 (keeps connection busy)
+                    writer.writeFully(h2HeadersFrame("/sse", SSE_STREAM_ID))
+                    writer.flush()
+
+                    // Wait for SSE DATA on the wire — once we receive it, the SSE's
+                    // writeAndFlush on the child channel is complete and respondWithBigBody
+                    // is suspended in awaitContent(). No more flushes from SSE.
+                    withTimeout(5_000.milliseconds) {
+                        waitForDataOnStream(reader, SSE_STREAM_ID)
+                    }
+
+                    // Send regular request on stream 5 (same TCP connection = same handler state)
+                    writer.writeFully(h2HeadersFrame("/regular", REGULAR_STREAM_ID))
+                    writer.flush()
+
+                    // Without the fix, this hangs: the regular response is written to the
+                    // channel but never flushed because flushIfNeeded() checks
+                    // activeRequests == 0, which is false (SSE stream is still active).
+                    val regularData = withTimeout(3_000.milliseconds) {
+                        readResponseForStream(reader, REGULAR_STREAM_ID)
+                    }
+
+                    assertEquals("ok", regularData)
+                }
+            }
+        } finally {
+            server.stop()
+        }
+    }
+
+    @Test
+    fun `H2 RST stream does not poison connection`() = runTest {
+        val requestReceived = CompletableDeferred<Unit>()
+        // Completed by HttpRequestCloseHandlerKey when stream 3's channel becomes inactive
+        val stream3ChannelClosed = CompletableDeferred<Unit>()
+        // Completed by the /data handler just before calling respondText
+        val dataReachedResponse = CompletableDeferred<Unit>()
+        // Completed by the test to allow /slow to proceed with its (failing) respondText call
+        val slowCanRespond = CompletableDeferred<Unit>()
+
+        val server = createServer {
+            routing {
+                get("/slow") {
+                    // Register a close callback so we know when the channel is truly gone
+                    @OptIn(InternalAPI::class)
+                    call.attributes.put(HttpRequestCloseHandlerKey) {
+                        stream3ChannelClosed.complete(Unit)
+                    }
+                    requestReceived.complete(Unit)
+                    // Suspend until the channel is closed (by the client's RST_STREAM), then wait
+                    // for the test to send /data and reach the response path before allowing
+                    // respondWithFailure to run and decrement activeRequests.
+                    stream3ChannelClosed.await()
+                    slowCanRespond.await()
+                    runCatching { call.respondText("slow ok") }
+                }
+                get("/data") {
+                    // Signal that /data has reached the response/flush path before handing off
+                    // to respondText, so the test can assert the flush is still blocked.
+                    dataReachedResponse.complete(Unit)
+                    call.respondText("data ok")
+                }
+            }
+        }
+        server.start(wait = false)
+
+        try {
+            SelectorManager().use { selector ->
+                aSocket(selector).tcp().connect("127.0.0.1", port).use { socket ->
+                    val writer = socket.openWriteChannel()
+                    val reader = socket.openReadChannel()
+
+                    writer.writeStringUtf8("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+                    writer.flush()
+                    writer.writeFully(h2Frame(null, Http2FrameTypes.SETTINGS, Http2Flags(), 0))
+                    writer.flush()
+
+                    val serverSettings = reader.readH2Frame()
+                    assertEquals(Http2FrameTypes.SETTINGS, serverSettings.frameType)
+                    val serverAck = reader.readH2Frame()
+                    assertEquals(Http2FrameTypes.SETTINGS, serverAck.frameType)
+                    assertTrue(serverAck.flags.ack())
+
+                    writer.writeFully(h2Frame(null, Http2FrameTypes.SETTINGS, Http2Flags().ack(true), 0))
+                    writer.flush()
+
+                    // Phase 1: send /slow, wait for the server to receive it, then cancel with RST_STREAM
+                    writer.writeFully(h2HeadersFrame("/slow", 3))
+                    writer.flush()
+                    withTimeout(5_000.milliseconds) { requestReceived.await() }
+
+                    val rstPayload = Unpooled.buffer(4)
+                    rstPayload.writeInt(Http2Error.CANCEL.code().toInt())
+                    writer.writeFully(h2Frame(rstPayload, Http2FrameTypes.RST_STREAM, Http2Flags(), 3))
+                    writer.flush()
+
+                    // Wait until stream 3's channel is fully closed server-side; the /slow handler
+                    // has resumed from stream3ChannelClosed.await() and is now suspended on
+                    // slowCanRespond — activeRequests is still 1 from /slow's increment.
+                    withTimeout(5_000.milliseconds) { stream3ChannelClosed.await() }
+
+                    // Phase 2: send /data while /slow has not yet run its failure path.
+                    // activeRequests == 1 (from /slow); /data's response will be written to Netty's
+                    // outbound buffer but flushIfNeeded() cannot fire until activeRequests drops to 0.
+                    writer.writeFully(h2HeadersFrame("/data", 5))
+                    writer.flush()
+
+                    // Read /data response concurrently — this will block until the flush fires.
+                    val dataResponseDeferred = async { readResponseForStream(reader, 5) }
+
+                    // Wait until /data's handler has been invoked and is about to call respondText.
+                    withTimeout(3_000.milliseconds) { dataReachedResponse.await() }
+
+                    // The /data response is not yet on the wire: /slow still holds activeRequests at
+                    // a non-zero value, preventing flushIfNeeded() from issuing context.flush().
+                    assertFalse(
+                        dataResponseDeferred.isCompleted,
+                        "/data response should be blocked until /slow cleanup"
+                    )
+
+                    // Release /slow → it calls respondText on a closed channel → respondWithFailure
+                    // → activeRequests.decrementAndGet() → flushIfNeeded() → context.flush()
+                    // → /data response delivered.
+                    slowCanRespond.complete(Unit)
+
+                    val body = withTimeout(3_000.milliseconds) { dataResponseDeferred.await() }
+                    assertEquals("data ok", body)
+                }
+            }
+        } finally {
+            server.stop()
+        }
+    }
+
+    private suspend fun waitForDataOnStream(reader: ByteReadChannel, targetStreamId: Int) {
+        while (true) {
+            val frame = reader.readH2Frame()
+            if (frame.streamId == targetStreamId && frame.frameType == Http2FrameTypes.DATA) {
+                return
+            }
+        }
+    }
+
+    private suspend fun readResponseForStream(reader: ByteReadChannel, targetStreamId: Int): String {
+        var body = ""
+        while (true) {
+            val frame = reader.readH2Frame()
+            if (frame.streamId == targetStreamId) {
+                when (frame.frameType) {
+                    Http2FrameTypes.DATA -> {
+                        body += String(frame.payload, Charsets.UTF_8)
+                        if (frame.flags.endOfStream()) return body
+                    }
+
+                    Http2FrameTypes.HEADERS -> {
+                        if (frame.flags.endOfStream()) return body
+                    }
+                }
+            }
+            // Skip frames for other streams (SSE, window updates, etc.)
+        }
+    }
+
+    private fun h2HeadersFrame(path: String, streamId: Int): ByteArray {
+        val headers = DefaultHttp2Headers().apply {
+            method("GET")
+            path(path)
+            scheme("http")
+        }
+        val encodedHeaders = Unpooled.buffer()
+        DefaultHttp2HeadersEncoder().encodeHeaders(streamId, headers, encodedHeaders)
+        return h2Frame(
+            encodedHeaders,
+            Http2FrameTypes.HEADERS,
+            Http2Flags().endOfHeaders(true).endOfStream(true),
+            streamId
+        )
+    }
+
+    private fun h2Frame(payload: ByteBuf?, type: Byte, flags: Http2Flags, streamId: Int): ByteArray {
+        val buf = Unpooled.buffer()
+        val payloadLength = payload?.readableBytes() ?: 0
+        buf.writeMedium(payloadLength)
+        buf.writeByte(type.toInt())
+        buf.writeByte(flags.value().toInt())
+        buf.writeInt(streamId)
+        payload?.let { buf.writeBytes(it) }
+        val frame = ByteArray(buf.readableBytes())
+        buf.readBytes(frame)
+        return frame
+    }
+
+    private suspend fun ByteReadChannel.readH2Frame(): H2Frame {
+        val header = Unpooled.wrappedBuffer(readByteArray(9))
+        val payloadLength = header.readUnsignedMedium()
+        val frameType = header.readByte()
+        val flags = Http2Flags(header.readUnsignedByte())
+        val streamId = readUnsignedInt(header)
+        val payload = if (payloadLength > 0) readByteArray(payloadLength) else ByteArray(0)
+        return H2Frame(frameType, flags, streamId, payload)
+    }
+
+    data class H2Frame(
+        val frameType: Byte,
+        val flags: Http2Flags,
+        val streamId: Int,
+        val payload: ByteArray,
+    )
+}
+
+open class NettyHttp3Test :
+    EngineTestBase<NettyApplicationEngine, NettyApplicationEngine.Configuration>(Netty) {
+
+    init {
+        enableSsl = true
+    }
+
+    @OptIn(ExperimentalKtorApi::class)
+    override fun configure(configuration: NettyApplicationEngine.Configuration) {
+        configuration.enableHttp3()
+    }
+
+    @Test
+    fun `simple GET request`() = runTest {
+        createAndStartServer {
+            application.routing {
+                get("/") {
+                    call.respondText("Hello, HTTP/3!")
+                }
+            }
+        }
+
+        withHttp3Client { quicChannel ->
+            val response = sendHttp3Request(quicChannel, "GET", "/")
+            assertEquals("200", response.status)
+            assertEquals("Hello, HTTP/3!", response.body)
+        }
+    }
+
+    @Test
+    fun `request with query parameters`() = runTest {
+        createAndStartServer {
+            application.routing {
+                get("/greet") {
+                    val name = call.request.queryParameters["name"] ?: "World"
+                    call.respondText("Hello, $name!")
+                }
+            }
+        }
+
+        withHttp3Client { quicChannel ->
+            val response = sendHttp3Request(quicChannel, "GET", "/greet?name=Ktor")
+            assertEquals("200", response.status)
+            assertEquals("Hello, Ktor!", response.body)
+        }
+    }
+
+    @Test
+    fun `POST request with body`() = runTest {
+        createAndStartServer {
+            application.routing {
+                post("/echo") {
+                    val text = call.receiveText()
+                    call.respondText(text)
+                }
+            }
+        }
+
+        withHttp3Client { quicChannel ->
+            val body = "Hello from HTTP/3 client"
+            val response = sendHttp3Request(quicChannel, "POST", "/echo", body)
+            assertEquals("200", response.status)
+            assertEquals(body, response.body)
+        }
+    }
+
+    @Test
+    fun `response headers`() = runTest {
+        createAndStartServer {
+            application.routing {
+                get("/headers") {
+                    call.response.headers.append("X-Custom-Header", "custom-value")
+                    call.respondText("ok")
+                }
+            }
+        }
+
+        withHttp3Client { quicChannel ->
+            val response = sendHttp3Request(quicChannel, "GET", "/headers")
+            assertEquals("200", response.status)
+            assertEquals("custom-value", response.headers["x-custom-header"])
+            assertEquals("ok", response.body)
+        }
+    }
+
+    @Test
+    fun `404 response`() = runTest {
+        createAndStartServer {
+            application.routing {
+                get("/exists") {
+                    call.respondText("found")
+                }
+            }
+        }
+
+        withHttp3Client { quicChannel ->
+            val response = sendHttp3Request(quicChannel, "GET", "/not-found")
+            assertEquals("404", response.status)
+        }
+    }
+
+    @Test
+    fun `multiple sequential requests on same connection`() = runTest {
+        createAndStartServer {
+            application.routing {
+                get("/count/{n}") {
+                    val n = call.parameters["n"]
+                    call.respondText("Request $n")
+                }
+            }
+        }
+
+        withHttp3Client { quicChannel ->
+            for (i in 1..3) {
+                val response = sendHttp3Request(quicChannel, "GET", "/count/$i")
+                assertEquals("200", response.status)
+                assertEquals("Request $i", response.body)
+            }
+        }
+    }
+
+    @Test
+    fun `POST request with trailers does not break stream`() = runTest {
+        createAndStartServer {
+            application.routing {
+                post("/echo-with-trailers") {
+                    val text = call.receiveText()
+                    call.respondText(text)
+                }
+            }
+        }
+
+        withHttp3Client { quicChannel ->
+            val responseHandler = Http3ResponseHandler()
+            val stream = Http3.newRequestStream(quicChannel, responseHandler).sync().getNow()
+
+            val headers = DefaultHttp3Headers().apply {
+                method("POST")
+                path("/echo-with-trailers")
+                scheme("https")
+                authority("localhost:$sslPort")
+            }
+            stream.writeAndFlush(DefaultHttp3HeadersFrame(headers)).sync()
+
+            val body = "Hello with trailers"
+            val buf = Unpooled.copiedBuffer(body, Charsets.UTF_8)
+            stream.writeAndFlush(DefaultHttp3DataFrame(buf)).sync()
+
+            // Send trailing HEADERS frame (trailers)
+            val trailers = DefaultHttp3Headers().apply {
+                add("x-checksum", "abc123")
+            }
+            stream.writeAndFlush(DefaultHttp3HeadersFrame(trailers)).sync()
+
+            stream.shutdownOutput().sync()
+
+            val response = responseHandler.responseQueue.poll(10, TimeUnit.SECONDS)
+                ?: error("Timed out waiting for HTTP/3 response")
+            assertEquals("200", response.status)
+            assertEquals(body, response.body)
+        }
+    }
+
+    private data class Http3Response(
+        val status: String,
+        val headers: Map<String, String>,
+        val body: String
+    )
+
+    private class Http3ResponseHandler : ChannelInboundHandlerAdapter() {
+        val responseQueue = LinkedBlockingQueue<Http3Response>()
+        private var status: String = ""
+        private var headers: MutableMap<String, String> = mutableMapOf()
+        private val bodyParts = mutableListOf<ByteArray>()
+
+        override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
+            when (msg) {
+                is Http3HeadersFrame -> {
+                    val h = msg.headers()
+                    status = h.status()?.toString() ?: ""
+                    h.forEach { (name, value) ->
+                        val nameStr = name.toString()
+                        if (!nameStr.startsWith(":")) {
+                            headers[nameStr] = value.toString()
+                        }
+                    }
+                }
+
+                is Http3DataFrame -> {
+                    val content = msg.content()
+                    val bytes = ByteArray(content.readableBytes())
+                    content.readBytes(bytes)
+                    bodyParts.add(bytes)
+                    msg.release()
+                }
+
+                else -> {
+                    super.channelRead(ctx, msg)
+                }
+            }
+        }
+
+        override fun channelInactive(ctx: ChannelHandlerContext) {
+            val body = bodyParts.joinToString("") { String(it, Charsets.UTF_8) }
+            responseQueue.offer(Http3Response(status, headers, body))
+            status = ""
+            headers = mutableMapOf()
+            bodyParts.clear()
+            super.channelInactive(ctx)
+        }
+    }
+
+    private suspend fun withHttp3Client(block: suspend (QuicChannel) -> Unit) {
+        val group = MultiThreadIoEventLoopGroup(NioIoHandler.newFactory())
+        try {
+            withContext(Dispatchers.IO) {
+                val quicSslContext = QuicSslContextBuilder.forClient()
+                    .trustManager(io.netty.handler.ssl.util.InsecureTrustManagerFactory.INSTANCE)
+                    .applicationProtocols(*Http3.supportedApplicationProtocols())
+                    .build()
+
+                val quicClientCodec = Http3.newQuicClientCodecBuilder()
+                    .sslContext(quicSslContext)
+                    .maxIdleTimeout(30_000, TimeUnit.MILLISECONDS)
+                    .initialMaxData(10_000_000)
+                    .initialMaxStreamDataBidirectionalLocal(1_000_000)
+                    .initialMaxStreamDataBidirectionalRemote(1_000_000)
+                    .initialMaxStreamsBidirectional(100)
+                    .build()
+
+                val udpChannel = Bootstrap()
+                    .group(group)
+                    .channel(NioDatagramChannel::class.java)
+                    .handler(quicClientCodec)
+                    .bind(0)
+                    .sync()
+                    .channel()
+
+                val quicChannel = QuicChannel.newBootstrap(udpChannel)
+                    .handler(Http3ClientConnectionHandler())
+                    .remoteAddress(InetSocketAddress("127.0.0.1", sslPort))
+                    .connect()
+                    .get()
+
+                try {
+                    block(quicChannel)
+                } finally {
+                    quicChannel.close().sync()
+                    udpChannel.close().sync()
+                }
+            }
+        } finally {
+            group.shutdownGracefully().sync()
+        }
+    }
+
+    private fun sendHttp3Request(
+        quicChannel: QuicChannel,
+        method: String,
+        path: String,
+        body: String? = null
+    ): Http3Response {
+        val responseHandler = Http3ResponseHandler()
+
+        val stream = Http3.newRequestStream(quicChannel, responseHandler).sync().getNow()
+
+        val headers = DefaultHttp3Headers().apply {
+            method(method)
+            path(path)
+            scheme("https")
+            authority("localhost:$sslPort")
+        }
+        stream.writeAndFlush(DefaultHttp3HeadersFrame(headers)).sync()
+
+        if (body != null) {
+            val buf = Unpooled.copiedBuffer(body, Charsets.UTF_8)
+            stream.writeAndFlush(DefaultHttp3DataFrame(buf)).sync()
+        }
+
+        stream.shutdownOutput().sync()
+
+        return responseHandler.responseQueue.poll(10, TimeUnit.SECONDS)
+            ?: error("Timed out waiting for HTTP/3 response")
+    }
+}
+
+/**
+ * Runs the full [NettyHttp3Test] suite with multiple `SO_REUSEPORT` datagram sockets, exercising
+ * the [io.netty.handler.codec.quic.QuicCodecDispatcher] path where the socket index is encoded
+ * into server connection IDs. On platforms without kernel-side UDP reuseport balancing (macOS),
+ * all datagrams land on one of the sockets, which still validates dispatcher-managed connection-id
+ * generation end to end.
+ *
+ * Skipped when `SO_REUSEPORT` is unavailable: the NIO transport needs the Java 9+ socket option,
+ * so on Java 8 the tests only run with a native transport (epoll/kqueue) on the classpath.
+ */
+class NettyHttp3MultiSocketTest : NettyHttp3Test() {
+
+    @BeforeTest
+    fun assumeReusePortSupported() {
+        val reusePortSupported = Epoll.isAvailable() || KQueue.isAvailable() ||
+            runCatching { StandardSocketOptions::class.java.getField("SO_REUSEPORT") }.isSuccess
+        assumeTrue(reusePortSupported, "SO_REUSEPORT is not supported in this environment")
+    }
+
+    @OptIn(ExperimentalKtorApi::class)
+    override fun configure(configuration: NettyApplicationEngine.Configuration) {
+        configuration.enableHttp3 {
+            udpSocketCount = 2
+        }
+    }
+}
+
+class NettyHttpRequestLifecycleTest :
+    HttpRequestLifecycleTest<NettyApplicationEngine, NettyApplicationEngine.Configuration>(Netty) {
+    init {
+        enableSsl = true
+        enableHttp2 = true
     }
 }

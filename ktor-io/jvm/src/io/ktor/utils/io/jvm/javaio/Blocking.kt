@@ -1,315 +1,162 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.utils.io.jvm.javaio
 
 import io.ktor.utils.io.*
-import kotlinx.atomicfu.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.CancellationException
-import org.slf4j.LoggerFactory
-import java.io.*
-import kotlin.coroutines.*
-import kotlin.coroutines.intrinsics.*
-
-private val ADAPTER_LOGGER by lazy { LoggerFactory.getLogger(BlockingAdapter::class.java) }
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.runBlocking
+import kotlinx.io.InternalIoApi
+import java.io.InputStream
+import java.io.OutputStream
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.math.min
 
 /**
- * Create blocking [java.io.InputStream] for this channel that does block every time the channel suspends at read
- * Similar to do reading in [runBlocking] however you can pass it to regular blocking API
+ * Create blocking [java.io.InputStream] for this channel that does block every time the channel suspends at read.
+ * Similar to do reading in [runBlocking] however you can pass it to regular blocking API.
+ *
+ * - Canceling the [parent] job interrupts blocking reads but leaves [this] channel open.
+ * - Closing the stream closes [this] channel but does not cancel the [parent] job.
+ *
+ * The caller is responsible for closing the stream.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.jvm.javaio.toInputStream)
+ *
+ * @param parent a parent job for blocking reads.
  */
-public fun ByteReadChannel.toInputStream(parent: Job? = null): InputStream = InputAdapter(parent, this)
+public fun ByteReadChannel.toInputStream(parent: Job? = null): InputStream =
+    ByteChannelInputStream(channel = this, parent = parent)
 
 /**
- * Create blocking [java.io.OutputStream] for this channel that does block every time the channel suspends at write
- * Similar to do reading in [runBlocking] however you can pass it to regular blocking API
+ * Creates a blocking [InputStream] parented by the [parent] job.
+ *
+ * - Canceling the [parent] job interrupts blocking reads but leaves [this] channel open.
+ * - Closing the stream closes [this] channel but does not cancel the [parent] job.
+ *
+ * The caller is responsible for closing the stream.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.jvm.javaio.asInputStream)
+ *
+ * @param parent a parent job for blocking reads.
  */
-public fun ByteWriteChannel.toOutputStream(parent: Job? = null): OutputStream = OutputAdapter(parent, this)
+@InternalAPI
+public fun ByteReadChannel.asInputStream(parent: Job): InputStream =
+    ByteChannelInputStream(channel = this, parent = parent)
 
-private class InputAdapter(parent: Job?, private val channel: ByteReadChannel) : InputStream() {
-    private val context = Job(parent)
+@OptIn(InternalAPI::class)
+private class ByteChannelInputStream(
+    private val channel: ByteReadChannel,
+    parent: Job?,
+) : InputStream() {
 
-    private val loop = object : BlockingAdapter(parent) {
-        override suspend fun loop() {
-            var readCount = 0
-            while (true) {
-                val buffer = rendezvous(readCount) as ByteArray
-                readCount = channel.readAvailable(buffer, offset, length)
-                if (readCount == -1) {
-                    context.complete()
-                    break
-                }
-            }
-            finish(readCount)
-        }
-    }
+    private val coroutineContext = parent ?: EmptyCoroutineContext
 
-    private var single: ByteArray? = null
-
-    override fun available(): Int {
-        return channel.availableForRead
-    }
-
-    @Synchronized
     override fun read(): Int {
-        val buffer = single ?: ByteArray(1).also { single = it }
-        val rc = loop.submitAndAwait(buffer, 0, 1)
-        if (rc == -1) return -1
-        if (rc != 1) error("Expected a single byte or EOF. Got $rc bytes.")
-        return buffer[0].toInt() and 0xff
+        if (channel.isClosedForRead) return -1
+        if (channel.readBuffer.exhausted()) blockingWait()
+
+        if (channel.isClosedForRead) return -1
+        return channel.readBuffer.readByte().toInt() and 0xff
     }
 
-    @Synchronized
-    override fun read(b: ByteArray?, off: Int, len: Int): Int {
-        return loop.submitAndAwait(b!!, off, len)
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        if (channel.isClosedForRead) return -1
+        if (channel.readBuffer.exhausted()) blockingWait()
+
+        val count = min(channel.availableForRead, len)
+        val result = channel.readBuffer.readAtMostTo(b, off, off + count)
+        if (result >= 0) return result
+        return if (channel.isClosedForRead) -1 else 0
     }
 
-    @Synchronized
-    override fun close() {
-        super.close()
-        channel.cancel()
-        if (!context.isCompleted) {
-            context.cancel()
+    private fun blockingWait() {
+        runBlocking(coroutineContext) {
+            channel.awaitContent()
         }
-        loop.shutdown()
+    }
+
+    override fun close() {
+        channel.cancel()
     }
 }
 
-private val CloseToken = Any()
-private val FlushToken = Any()
+/**
+ * Create blocking [java.io.OutputStream] for this channel that does block every time the channel suspends at write.
+ * Similar to do reading in [runBlocking] however you can pass it to regular blocking API.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.jvm.javaio.toOutputStream)
+ */
+public fun ByteWriteChannel.toOutputStream(): OutputStream = ByteChannelOutputStream(channel = this, parent = null)
 
-private class OutputAdapter(parent: Job?, private val channel: ByteWriteChannel) : OutputStream() {
+/**
+ * Creates a blocking [OutputStream] parented by the [parent] job.
+ *
+ * Cancellation propagation:
+ * - Canceling the [parent] job interrupts blocking writes but leaves [this] channel open.
+ * - Closing the stream closes [this] channel but does not cancel the [parent] job.
+ *
+ * The caller is responsible for closing the stream.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.jvm.javaio.asOutputStream)
+ *
+ * @param parent a parent job for blocking writes.
+ */
+@InternalAPI
+public fun ByteWriteChannel.asOutputStream(parent: Job): OutputStream =
+    ByteChannelOutputStream(channel = this, parent = parent)
 
-    private val loop = object : BlockingAdapter(parent) {
-        override suspend fun loop() {
-            try {
-                while (true) {
-                    val task = rendezvous(0)
-                    if (task === CloseToken) {
-                        break
-                    } else if (task === FlushToken) {
-                        channel.flush()
-                        channel.closedCause?.let { throw it }
-                    } else if (task is ByteArray) channel.writeFully(task, offset, length)
-                }
-            } catch (t: Throwable) {
-                if (t !is CancellationException) {
-                    channel.close(t)
-                }
-                throw t
-            } finally {
-                if (!channel.close()) {
-                    channel.closedCause?.let { throw it }
-                }
-            }
+private const val FLUSH_THRESHOLD: Long = CHANNEL_MAX_SIZE.toLong()
+
+internal class ByteChannelOutputStream(
+    private val channel: ByteWriteChannel,
+    parent: Job? = null,
+) : OutputStream() {
+
+    private val coroutineContext = parent ?: EmptyCoroutineContext
+
+    @OptIn(InternalAPI::class)
+    private val channelWriteBuffer = channel.writeBuffer
+
+    override fun write(b: Int) {
+        throwIfClosed()
+        channelWriteBuffer.writeByte(b.toByte())
+        flushIfNeeded()
+    }
+
+    override fun write(b: ByteArray, off: Int, len: Int) {
+        throwIfClosed()
+        channelWriteBuffer.write(b, off, off + len)
+        flushIfNeeded()
+    }
+
+    @OptIn(InternalIoApi::class)
+    private fun flushIfNeeded() {
+        if (channel.autoFlush || channelWriteBuffer.buffer.size >= FLUSH_THRESHOLD) {
+            flush()
         }
     }
 
-    private var single: ByteArray? = null
-
-    @Synchronized
-    override fun write(b: Int) {
-        val buffer = single ?: ByteArray(1).also { single = it }
-        buffer[0] = b.toByte()
-        loop.submitAndAwait(buffer, 0, 1)
-    }
-
-    @Synchronized
-    override fun write(b: ByteArray?, off: Int, len: Int) {
-        loop.submitAndAwait(b!!, off, len)
-    }
-
-    @Synchronized
     override fun flush() {
-        loop.submitAndAwait(FlushToken)
+        throwIfClosed()
+        runBlocking(coroutineContext) {
+            channel.flush()
+        }
     }
 
-    @Synchronized
+    private fun throwIfClosed() {
+        if (channel.isClosedForWrite) throw channel.closedCause ?: ClosedWriteChannelException()
+    }
+
     override fun close() {
         try {
-            loop.submitAndAwait(CloseToken)
-            loop.shutdown()
-        } catch (t: Throwable) {
-            throw IOException(t)
-        }
-    }
-}
-
-private abstract class BlockingAdapter(val parent: Job? = null) {
-
-    private val end: Continuation<Unit> = object : Continuation<Unit> {
-        override val context: CoroutineContext =
-            if (parent != null) UnsafeBlockingTrampoline + parent else UnsafeBlockingTrampoline
-
-        override fun resumeWith(result: Result<Unit>) {
-            val value = result.exceptionOrNull() ?: Unit
-
-            val before = state.getAndUpdate { current ->
-                when (current) {
-                    is Thread, is Continuation<*>, this -> value
-                    else -> return
-                }
+            runBlocking(coroutineContext) {
+                channel.flushAndClose()
             }
-
-            when (before) {
-                is Thread -> parkingImpl.unpark(before)
-                is Continuation<*> -> result.exceptionOrNull()?.let {
-                    before.resumeWithException(it)
-                }
-            }
-
-            if (result.isFailure && result.exceptionOrNull() !is CancellationException) {
-                parent?.cancel()
-            }
-
-            disposable?.dispose()
+        } catch (cause: Throwable) {
+            channel.cancel(cause)
+            throw cause
         }
-    }
-
-    @Suppress("LeakingThis")
-    private val state: AtomicRef<Any> =
-        atomic(this) // could be a thread, a continuation, Unit, an exception or this if not yet started
-    private val result = atomic(0)
-    private val disposable: DisposableHandle? = parent?.invokeOnCompletion { cause ->
-        if (cause != null) {
-            end.resumeWithException(cause)
-        }
-    }
-
-    protected var offset: Int = 0
-        private set
-    protected var length: Int = 0
-        private set
-
-    init {
-        val block: suspend () -> Unit = { loop() }
-        block.startCoroutineUninterceptedOrReturn(end)
-        require(state.value !== this)
-    }
-
-    protected abstract suspend fun loop()
-
-    fun shutdown() {
-        disposable?.dispose()
-        end.resumeWithException(CancellationException("Stream closed"))
-    }
-
-    fun submitAndAwait(buffer: ByteArray, offset: Int, length: Int): Int {
-        this.offset = offset
-        this.length = length
-        return submitAndAwait(buffer)
-    }
-
-    fun submitAndAwait(jobToken: Any): Int {
-        val thread = Thread.currentThread()
-
-        var cont: Continuation<Any>? = null
-
-        state.update { value ->
-            when (value) {
-                is Continuation<*> -> {
-                    @Suppress("UNCHECKED_CAST")
-                    cont = value as Continuation<Any>
-                    thread
-                }
-
-                is Unit -> {
-                    return result.value
-                }
-
-                is Throwable -> {
-                    throw value
-                }
-
-                is Thread -> throw IllegalStateException("There is already thread owning adapter")
-                this -> throw IllegalStateException("Not yet started")
-                else -> NoWhenBranchMatchedException()
-            }
-        }
-
-        cont!!.resume(jobToken)
-
-        parkingLoop(thread)
-
-        state.value.let { state ->
-            if (state is Throwable) {
-                throw state
-            }
-        }
-
-        return result.value
-    }
-
-    @OptIn(InternalCoroutinesApi::class)
-    private fun parkingLoop(thread: Thread) {
-        if (state.value !== thread) return
-        if (!isParkingAllowed()) {
-            ADAPTER_LOGGER.warn(
-                """
-                Blocking network thread detected. 
-                It can possible lead to a performance decline or even a deadlock.
-                Please make sure you're using blocking IO primitives like InputStream and OutputStream only in 
-                the context of Dispatchers.IO:
-                ```
-                withContext(Dispatchers.IO) {
-                    myInputStream.read()
-                }
-                ```
-                """.trimIndent()
-            )
-        }
-
-        do {
-            val nextEventTimeNanos = processNextEventInCurrentThread()
-            if (state.value !== thread) break
-
-            if (nextEventTimeNanos > 0L) {
-                parkingImpl.park(nextEventTimeNanos)
-            }
-        } while (true)
-    }
-
-    @Suppress("NOTHING_TO_INLINE")
-    protected suspend inline fun rendezvous(rc: Int): Any {
-        result.value = rc
-
-        return suspendCoroutineUninterceptedOrReturn { ucont ->
-            rendezvousBlock(ucont)
-        }
-    }
-
-    private fun rendezvousBlock(ucont: Continuation<Any>): Any {
-        var thread: Thread? = null
-
-        state.update { value ->
-            when (value) {
-                is Thread -> {
-                    thread = value
-                    ucont.intercepted()
-                }
-
-                this -> ucont.intercepted()
-                else -> throw IllegalStateException("Already suspended or in finished state")
-            }
-        }
-
-        if (thread != null) {
-            parkingImpl.unpark(thread!!)
-        }
-
-        return COROUTINE_SUSPENDED
-    }
-
-    protected fun finish(rc: Int) {
-        result.value = rc
-    }
-}
-
-private object UnsafeBlockingTrampoline : CoroutineDispatcher() {
-    override fun isDispatchNeeded(context: CoroutineContext): Boolean = true
-
-    override fun dispatch(context: CoroutineContext, block: Runnable) {
-        block.run()
     }
 }

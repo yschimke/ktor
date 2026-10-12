@@ -8,20 +8,22 @@ import io.ktor.network.sockets.*
 import io.ktor.utils.io.pool.*
 import java.nio.*
 
-@Suppress("KDocMissingDocumentation")
-internal val DEFAULT_BYTE_BUFFER_POOL_SIZE: Int = 4096
+internal const val DEFAULT_BYTE_BUFFER_POOL_SIZE: Int = 4096
 
-@Suppress("KDocMissingDocumentation")
 internal const val DEFAULT_BYTE_BUFFER_BUFFER_SIZE: Int = 4096
 
 /**
  * Byte buffer pool for general-purpose buffers.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.network.util.DefaultByteBufferPool)
  */
 public val DefaultByteBufferPool: ObjectPool<ByteBuffer> =
     DirectByteBufferPool(DEFAULT_BYTE_BUFFER_POOL_SIZE, DEFAULT_BYTE_BUFFER_BUFFER_SIZE)
 
 /**
  * Byte buffer pool for UDP datagrams
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.network.util.DefaultDatagramByteBufferPool)
  */
 public val DefaultDatagramByteBufferPool: ObjectPool<ByteBuffer> =
     DirectByteBufferPool(2048, MAX_DATAGRAM_SIZE)

@@ -1,10 +1,6 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
-
-repositories {
-    google()
-}
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 plugins {
     id("com.android.library")
@@ -17,21 +13,21 @@ kotlin {
     }
 
     sourceSets {
-        val androidMain by getting {
+        named("androidMain") {
             kotlin.srcDir("android/src")
             dependencies {
-                implementation(project(":ktor-client:ktor-client-plugins:ktor-client-tracing"))
-                implementation(project(":ktor-client:ktor-client-core"))
+                implementation(projects.ktorClientTracing)
+                implementation(projects.ktorClientCore)
                 implementation("com.facebook.stetho:stetho:$android_stetho_version")
             }
         }
 
-        val androidTest by getting {
+        named("androidTest") {
             kotlin.srcDir("android/test")
             dependencies {
-                implementation(project(":ktor-client:ktor-client-cio"))
-                implementation(kotlin("test-junit5"))
-                implementation("org.mockito:mockito-core:3.12.4")
+                implementation(projects.ktorClientCio)
+                implementation(libs.kotlin.test.junit5)
+                implementation("org.mockito:mockito-core:5.23.0")
             }
         }
     }
@@ -69,7 +65,7 @@ android {
     useLibrary("android.test.mock")
 
     sourceSets {
-        val main by getting {
+        named("main") {
             manifest.srcFile("AndroidManifest.xml")
         }
     }

@@ -4,14 +4,18 @@ Before we get started, thank you for considering contributing to Ktor. It's awes
 
 There are multiple ways you can contribute:
 
-* Code
-* Documentation
-* Community Support
-* Feedback/Issue reports
+1. [Code contributions](#code-contributions)
+2. [Documentation](#documentation)
+3. [Community Support](#community-support)
+4. [Reporting Issues](#reporting-issues)
 
-Independently of how you'd like to contribute, please make sure you read and comply with the [Code of Conduct](CODE_OF_CONDUCT.md).
+Independently of how you'd like to contribute, please make sure you read and comply with the [Code of Conduct](CODE_OF_CONDUCT.md) and 
+[AI Policy](AI_POLICY.md).
 
-## Code
+## Code contributions
+[code-contributions]: #code-contributions
+
+### What to work on
 
 There are many bugs and features in the Ktor backlog and you're free to pick any of them. We do recommend however starting
 with some of the [low hanging fruit](https://youtrack.jetbrains.com/issues?q=%23Ktor%20%20%20%23%7BUp%20For%20Grabs%7D%20%20%23Unresolved%20).
@@ -31,34 +35,79 @@ for other platforms, the corresponding tests for these should also be run. To se
 
 `./gradlew tasks`
 
-For Ktor to build correctly, a series of additional libraries/tools need to be installed, based on the operating
-system you're using for development:
+#### System requirements
+
+The project requires JDK 21.
+Make sure you have it installed before attempting to build the project.
+If you use IntelliJ IDEA, you should also select JDK 21 in **"Project Structure" > "Project" > "SDK"**
+
+On macOS, install [Xcode and Xcode Command line tools](https://developer.apple.com/download/) to build Apple targets.
+Launch it and accept the license terms first.
+
+If you want to run `ktor-client-webrtc` JVM tests on Linux, you should have `pulseaudio` installed.
+The actual audio is not played during tests, but WebRTC native library depends on it. You can install it on Ubuntu with:
+```bash
+sudo apt update
+sudo apt install pulseaudio
+```
+
+<details>
+<summary>Requirements for Ktor before 3.1.0</summary>
+
+For versions of Ktor before 3.1.0 to build correctly,
+a series of additional libraries/tools need to be installed, based on the operating
+system you use for development:
 
 **Linux**
 
 Run the following commands to install `libcurl` and `libncurses`:
 
-```
-        sudo apt-get update
-        sudo apt-get install libncurses5 libncursesw5 libtinfo5
-        sudo apt-get install libcurl4-openssl-dev
+```bash
+sudo apt update
+sudo apt install libcurl4-openssl-dev libncurses-dev
 ```
 
 **macOS** 
 
-The easiest way to install `libcurl` and 'libncurses` on macOS is to use [Homebrew](https://brew.sh). Run the following commands:
+The easiest way to install `libcurl` and `libncurses` on macOS is to use [Homebrew](https://brew.sh).
+Run the following commands:
 
+```bash
+brew install curl ncurses
 ```
-    brew install curl
-    brew install ncurses
-```
-
-If targeting macOS and/or iOS, install `Xcode` and `Xcode command line tools` on macOS.
 
 **Windows**
 
 For development on Windows, it is recommended to use [Cygwin](http://cygwin.com/) which will provide the necessary
-libaries such as `libncurses`.
+libraries such as `libncurses`.
+
+</details>
+
+#### Optional: Android SDK
+
+The Android SDK is optional for building Ktor.
+If the Android SDK is not available, Android targets will be automatically excluded from the build.
+
+To install the Android SDK, use [Android Studio](https://developer.android.com/studio) or [sdkmanager](https://developer.android.com/tools/sdkmanager).
+
+To enable Android targets,
+define the path to the Android SDK in the `ANDROID_HOME` environment variable or `sdk.dir` in the `local.properties` file:
+```properties
+sdk.dir=/path/to/android/sdk
+```
+
+#### Optional: CocoaPods for Apple targets
+
+CocoaPods is optional for building Ktor.
+If CocoaPods is not available on macOS, Apple targets will be automatically excluded from modules that require CocoaPods dependencies (e.g., `ktor-client-webrtc`).
+Other modules will continue to build Apple targets normally.
+
+To install CocoaPods, follow the [Kotlin Multiplatform CocoaPods setup guide](https://www.jetbrains.com/help/kotlin-multiplatform-dev/multiplatform-cocoapods-overview.html).
+
+You can also specify the path to the `pod` executable using the `kotlin.native.cocoapods.bin` property in `local.properties`:
+```properties
+kotlin.native.cocoapods.bin=/path/to/pod/binary
+```
 
 #### Referencing artifacts locally
 
@@ -68,21 +117,62 @@ used for debugging purposes. One of these is to publish to [Maven Local](https:/
 by adding the following line to your `settings.gradle(.kts)` file:
 
 ```groovy
-    includeBuild("/PATH/TO/KTOR")
+includeBuild("/PATH/TO/KTOR")
 ```
 
 #### Importing into IntelliJ IDEA
 
-To import into IntelliJ IDEA, just open up the `Ktor` project folder. IntelliJ IDEA should automatically detect
-that it is a Gradle project and import it. It's important that you make sure that all building and test operations
-are delegated to Gradle under [Gradle Settings](https://www.jetbrains.com/help/idea/gradle-settings.html).
+Open the `Ktor` project folder — IntelliJ IDEA will detect it as a Gradle project and import it automatically.
+Make sure all building and test operations are delegated to Gradle under [Gradle Settings](https://www.jetbrains.com/help/idea/gradle-settings.html).
+
+##### IDE sync mode
+
+By default, IDE sync uses **light mode**, which excludes native targets to reduce memory consumption and sync time.
+This is sufficient for working on JVM or web targets.
+
+When working on native targets in the IDE, enable them via `ktorbuild.syncMode` in `~/.gradle/gradle.properties`:
+
+```properties
+# Include a specific native target alongside JVM/JS
+ktorbuild.syncMode=light+macosArm64
+
+# Include all targets (requires 10 GB of RAM for Gradle Daemon)
+ktorbuild.syncMode=full
+```
+
+See the **Performance** section in `gradle.properties` for all available options and tuning tips.
+
+#### Working with Rust-based Modules Locally
+
+The `ktor-client-webrtc-rs` module utilizes Rust components internally. To develop with this module in your local environment, you'll need to complete the following setup steps:
+
+**Prerequisites:**
+- Install Rust and Cargo on your system
+- Configure your build environment by adding `ktorbuild.rustCompilation=true` to your global `gradle.properties` file
+  > ⚠️ **Important:** This setting should remain local to your development environment—do not commit this change to version control
+
+**Additional Dependencies:**
+Depending on your target platforms, you may need to install additional dependencies for Rust cross-compilation. For comprehensive guidance on cross-compilation requirements and troubleshooting, refer to the [Gobley cross-compilation documentation](https://gobley.dev/docs/cross-compilation-tips).
+
+### Branching Strategy
+
+Ktor uses the following branches:
+
+* **`main`** – Next minor or major release. Target for new features and breaking changes.
+* **`release/*`** – Next patch release. Target for bug fixes.
+
+> [!TIP]
+> Switch your branch base between `main` and `release/*`:
+> ```bash
+> ./switch-base-branch.sh [--dry-run] [--help]
+> ```
 
 ### Pull Requests
 
-Contributions are made using Github [pull requests](https://help.github.com/en/articles/about-pull-requests):
+Contributions are made using GitHub [pull requests](https://help.github.com/en/articles/about-pull-requests):
 
 1. Fork the Ktor repository and work on your fork.
-2. [Create](https://github.com/ktorio/ktor/compare) a new PR with a request to merge to the **main** branch.
+2. [Create](https://github.com/ktorio/ktor/compare) a new PR with a request to merge to the appropriate branch (see [Branching Strategy](#branching-strategy)).
 3. Ensure that the description is clear and refers to an existing ticket/bug if applicable, prefixing the description with
    KTOR-{NUM}, where {NUM} refers to the YouTrack issue.
 4. When contributing a new feature, provide motivation and use-cases describing why
@@ -90,6 +180,10 @@ Contributions are made using Github [pull requests](https://help.github.com/en/a
 5. If the contribution requires updates to documentation (be it updating existing contents or creating new one), please
    file a new ticket on [YouTrack](https://youtrack.jetbrains.com/issues/KTOR).
 6. Make sure any code contributed is covered by tests and no existing tests are broken.
+7. Before submitting your PR, ensure to invoke the following Gradle tasks:
+   1. `./gradlew updateKotlinAbi` - this will update the ABI snapshot with any public API changes
+   2. `./gradlew formatKotlin` - this will reformat the code to follow the style guide
+   3. `./gradlew checkKotlinAbi lintKotlin` - checks the output of the previous tasks
 
 ### Style guides
 
@@ -97,13 +191,14 @@ A few things to remember:
 
 * Your code should conform to
   the official [Kotlin code style guide](https://kotlinlang.org/docs/reference/coding-conventions.html)
-  except that star imports should be always enabled
-  (ensure Preferences | Editor | Code Style | Kotlin, tab **Imports**, both `Use import with '*'` should be checked).
+  except that star imports should always be used for `io.ktor.*` packages.
+  Code style is managed by [EditorConfig](https://www.jetbrains.com/help/idea/editorconfig.html),
+  so make sure the EditorConfig plugin is enabled in the IDE.
 * Every new source file should have a copyright header.
 * Every public API (including functions, classes, objects and so on) should be documented,
   every parameter, property, return types and exceptions should be described properly.
-* A questionable and new API should be marked with the `@KtorExperimentalAPI` annotation.
-* A Public API that is not intended to be used by end-users that couldn't be made private/internal due to technical reasons,
+* A Public API which is not intended to be used by end-users that couldn't be made private/internal due to technical
+  reasons,
   should be marked with `@InternalAPI` annotation.
 
 ### Commit messages
@@ -116,21 +211,56 @@ A few things to remember:
 See [How to Write a Git Commit Message](https://chris.beams.io/posts/git-commit/)
 
 ### Design process
+[design-process]: #design-process
 
-Whether you're thinking of a new feature or want to change the design of an existing process, before making any
-code contributions, please make sure you read how we handle the [design process on the team](https://blog.jetbrains.com/ktor/2020/09/24/ktor-design-process/).
+When making significant changes to the API, either by a new feature or modifying existing APIs, it is best to discuss the design with the team before making any code contributions.
+
+All design reviews are conducted through pull requests in the [ktor-klip](https://github.com/ktorio/ktor-klip) repository.  The process here is described further in the repository README, but it is roughly analogous to the Kotlin's [KEEP RFC process](https://github.com/Kotlin/KEEP).
+
+### API changes
+
+Ktor enforces strict binary compatibility for all changes using [Kotlin's Gradle plugin](https://kotlinlang.org/docs/gradle-binary-compatibility-validation.html).
+
+For every change to a public API, you must run `./gradlew updateKotlinAbi` and commit the resulting changes.
+
+API changes are accepted in accordance with standard practice for logical versioning.
+
+- **Patch releases**, for defects targeting the `release` branch, should not have *ANY* ABI changes.
+- **Minor releases**, for features and defects targeting `main`, ABI snapshots must only have additions, with several caveats listed under [Breaking changes](#breaking-changes)
+- **Major releases** allows all changes; however, due diligence is required to mitigate the impact of any breaking changes.
+
+For significant changes to the API, please follow the process listed under [Design process](#design-process).
+
+#### Breaking changes
+[breaking-changes]: #breaking-changes
+
+All the following modifications to public APIs are considered breaking changes:
+1. Changes to existing public APIs.  Besides items marked with `@InternalAPI` or `@ExperimentalKtorApi`, any red in the ABI snapshot diffs are considered breaking.
+2. New members on extensible classes and interfaces.  Except for types marked with `@SubclassOptInRequired`, or opt-ins mentioned above, or new members that include default implementations.
+3. New sealed hierarchy subtypes or enum constants on existing enum classes.  These force changes in exhaustive `when` expressions, so we generally must wait for major releases to include these.
+4. Behavioral changes.  If there is a good chance that someone relies on an existing behavior, this is considered a breaking change.
+
+##### Avoiding breaking changes
+
+* When a breaking change is needed, it is best to find a way to deprecate the existing implementation and provide a new one while maintaining support for the existing.
+* For some cases, an implementation could be dangerous and does not have a direct replacement.  In these cases, it is better to deprecate the implementation with a clear explanation of the risks and alternatives.
+* When implementing type hierarchies, if change is likely, it's better to avoid sealed hierarchies and to use `@SubclassOptInRequired`.
+* For new features that are likely to change, it's best to annotate them with `@ExperimentalKtorApi`.  After the feature has stabilized, we can remove the opt-in requirement. 
 
 ## Documentation
+[documentation]: #documentation
 
 Ktor documentation is placed in a separate [ktor-documentation](https://github.com/ktorio/ktor-documentation) repository. See the [Contributing](https://github.com/ktorio/ktor-documentation#contributing) section to learn how you can contribute to Ktor docs.
 
 ## Community Support
+[community-support]: #community-support
 
 Ktor provides a number of [channels for support](https://ktor.io/support). In addition to our support engineers, we also count
 on our community to help, without whom Ktor wouldn't be where it is today. If you'd like to help others, please join one of our community
 channels and help out. It's also a great way to learn!
 
-## Feedback/Issue Reports
+## Reporting Issues
+[reporting issues]: #reporting-issues
 
 Please use [YouTrack](https://youtrack.jetbrains.com/issues/KTOR) to submit issues, whether these are
 bug reports or feature requests. Before doing so however, please take into consideration the following:

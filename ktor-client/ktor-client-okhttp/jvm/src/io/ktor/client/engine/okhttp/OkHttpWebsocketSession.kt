@@ -5,29 +5,34 @@
 package io.ktor.client.engine.okhttp
 
 import io.ktor.client.plugins.websocket.*
+import io.ktor.http.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.CancellationException
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.*
 import okhttp3.*
-import okio.*
+import okio.ByteString
 import okio.ByteString.Companion.toByteString
-import kotlin.coroutines.*
+import kotlin.coroutines.CoroutineContext
 
+@OptIn(InternalAPI::class)
 internal class OkHttpWebsocketSession(
     private val engine: OkHttpClient,
     private val webSocketFactory: WebSocket.Factory,
     engineRequest: Request,
-    override val coroutineContext: CoroutineContext
+    override val coroutineContext: CoroutineContext,
+    wsConfig: WebSockets = WebSockets(),
 ) : DefaultWebSocketSession, WebSocketListener() {
     // Deferred reference to "this", completed only after the object successfully constructed.
     private val self = CompletableDeferred<OkHttpWebsocketSession>()
 
     internal val originResponse: CompletableDeferred<Response> = CompletableDeferred()
 
-    override var pingIntervalMillis: Long
-        get() = engine.pingIntervalMillis.toLong()
+    private val channelsConfig: WebSocketChannelsConfig = wsConfig.channelsConfig
+
+    override var pingIntervalMillis: Long =
+        engine.pingIntervalMillis.toLong().takeIf { it != PINGER_DISABLED } ?: wsConfig.pingIntervalMillis
         set(_) = throw WebSocketException(
             "OkHttp doesn't support dynamic ping interval. You could switch it in the engine configuration."
         )
@@ -44,11 +49,20 @@ internal class OkHttpWebsocketSession(
         get() = Long.MAX_VALUE
         set(_) = throw WebSocketException("Max frame size switch is not supported in OkHttp engine.")
 
-    private val _incoming = Channel<Frame>()
+    private val _incoming = run {
+        require(!channelsConfig.incoming.canSuspend) {
+            "OkHttp does not support SUSPEND overflow strategy for incoming channel"
+        }
+        Channel.from<Frame>(channelsConfig.incoming)
+    }
+    private val _outgoing = Channel.from<Frame>(channelsConfig.outgoing)
     private val _closeReason = CompletableDeferred<CloseReason?>()
 
     override val incoming: ReceiveChannel<Frame>
         get() = _incoming
+
+    override val outgoing: SendChannel<Frame>
+        get() = _outgoing
 
     override val closeReason: Deferred<CloseReason?>
         get() = _closeReason
@@ -58,23 +72,25 @@ internal class OkHttpWebsocketSession(
         require(negotiatedExtensions.isEmpty()) { "Extensions are not supported." }
     }
 
-    @OptIn(ObsoleteCoroutinesApi::class)
-    override val outgoing: SendChannel<Frame> = actor {
+    private val writeJob = launch {
         val websocket: WebSocket = webSocketFactory.newWebSocket(engineRequest, self.await())
         var closeReason = DEFAULT_CLOSE_REASON_ERROR
 
         try {
-            for (frame in channel) {
+            for (frame in _outgoing) {
                 when (frame) {
                     is Frame.Binary -> websocket.send(frame.data.toByteString(0, frame.data.size))
+
                     is Frame.Text -> websocket.send(String(frame.data))
+
                     is Frame.Close -> {
                         val outgoingCloseReason = frame.readReason()!!
                         if (!outgoingCloseReason.isReserved()) {
                             closeReason = outgoingCloseReason
                         }
-                        return@actor
+                        return@launch
                     }
+
                     else -> throw UnsupportedFrameTypeException(frame)
                 }
             }
@@ -98,12 +114,12 @@ internal class OkHttpWebsocketSession(
 
     override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
         super.onMessage(webSocket, bytes)
-        _incoming.trySendBlocking(Frame.Binary(true, bytes.toByteArray()))
+        _incoming.trySend(Frame.Binary(fin = true, data = bytes.toByteArray()))
     }
 
     override fun onMessage(webSocket: WebSocket, text: String) {
         super.onMessage(webSocket, text)
-        _incoming.trySendBlocking(Frame.Text(true, text.toByteArray()))
+        _incoming.trySend(Frame.Text(true, text.toByteArray()))
     }
 
     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
@@ -111,31 +127,35 @@ internal class OkHttpWebsocketSession(
 
         _closeReason.complete(CloseReason(code.toShort(), reason))
         _incoming.close()
-        outgoing.close(
-            CancellationException(
-                "WebSocket session closed with code ${CloseReason.Codes.byCode(code.toShort())?.toString() ?: code}."
-            )
+        val cause = CancellationException(
+            "WebSocket session closed with code ${CloseReason.Codes.byCode(code.toShort())?.toString() ?: code}."
         )
+        outgoing.close(cause)
+        writeJob.cancel(cause)
     }
 
     override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
         super.onClosing(webSocket, code, reason)
 
         _closeReason.complete(CloseReason(code.toShort(), reason))
-        try {
-            outgoing.trySendBlocking(Frame.Close(CloseReason(code.toShort(), reason)))
-        } catch (ignore: Throwable) {
-        }
+        outgoing.trySend(Frame.Close(CloseReason(code.toShort(), reason)))
         _incoming.close()
     }
 
     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
         super.onFailure(webSocket, t, response)
+        val statusCode = response?.code
 
-        _closeReason.completeExceptionally(t)
-        originResponse.completeExceptionally(t)
-        _incoming.close(t)
-        outgoing.close(t)
+        if (statusCode == HttpStatusCode.Unauthorized.value) {
+            originResponse.complete(response)
+            _incoming.close()
+            outgoing.close()
+        } else {
+            originResponse.completeExceptionally(t)
+            _closeReason.completeExceptionally(t)
+            _incoming.close(t)
+            outgoing.close(t)
+        }
     }
 
     override suspend fun flush() {
@@ -144,7 +164,7 @@ internal class OkHttpWebsocketSession(
     /**
      * Creates a new web socket and starts the session.
      */
-    public fun start() {
+    fun start() {
         self.complete(this)
     }
 
@@ -159,7 +179,6 @@ internal class OkHttpWebsocketSession(
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
-@Suppress("KDocMissingDocumentation")
 public class UnsupportedFrameTypeException(
     private val frame: Frame
 ) : IllegalArgumentException("Unsupported frame type: $frame"), CopyableThrowable<UnsupportedFrameTypeException> {
@@ -168,10 +187,11 @@ public class UnsupportedFrameTypeException(
     }
 }
 
-@OptIn(InternalAPI::class)
-@Suppress("DEPRECATION")
-private fun CloseReason.isReserved() = CloseReason.Codes.byCode(code).let { recognized ->
-    recognized == null || recognized == CloseReason.Codes.CLOSED_ABNORMALLY
+// RFC 6455 §7.4.1: codes 1004-1006 and 1015-2999 are reserved and MUST NOT be sent.
+// Codes 3000-3999 (library/framework) and 4000-4999 (application private) are allowed.
+private fun CloseReason.isReserved(): Boolean {
+    val intCode = code.toInt()
+    return intCode in 1004..1006 || intCode in 1015..2999
 }
 
 private val DEFAULT_CLOSE_REASON_ERROR: CloseReason =

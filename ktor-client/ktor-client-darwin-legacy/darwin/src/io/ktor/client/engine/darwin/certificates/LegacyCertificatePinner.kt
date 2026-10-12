@@ -1,14 +1,20 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.client.engine.darwin.certificates
 
 import io.ktor.client.engine.darwin.*
 import io.ktor.client.engine.darwin.internal.legacy.*
 import kotlinx.cinterop.*
-import platform.CoreCrypto.*
-import platform.CoreFoundation.*
+import platform.CoreCrypto.CC_SHA1
+import platform.CoreCrypto.CC_SHA1_DIGEST_LENGTH
+import platform.CoreCrypto.CC_SHA256
+import platform.CoreCrypto.CC_SHA256_DIGEST_LENGTH
+import platform.CoreFoundation.CFDictionaryGetValue
+import platform.CoreFoundation.CFRetain
+import platform.CoreFoundation.CFStringCreateWithCString
+import platform.CoreFoundation.kCFStringEncodingUTF8
 import platform.Foundation.*
 import platform.Security.*
 
@@ -106,9 +112,11 @@ import platform.Security.*
  * This class was heavily inspired by OkHttp, which is a great Http library for Android
  * https://square.github.io/okhttp/4.x/okhttp/okhttp3/-certificate-pinner/
  * https://github.com/square/okhttp/blob/master/okhttp/src/main/java/okhttp3/CertificatePinner.kt
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.certificates.LegacyCertificatePinner)
  */
 @OptIn(UnsafeNumber::class)
-public data class LegacyCertificatePinner internal constructor(
+public data class LegacyCertificatePinner(
     private val pinnedCertificates: Set<LegacyPinnedCertificate>,
     private val validateTrust: Boolean
 ) : ChallengeHandler {
@@ -200,6 +208,7 @@ public data class LegacyCertificatePinner internal constructor(
 
                     pin.hash == sha256
                 }
+
                 LegacyCertificatesInfo.HASH_ALGORITHM_SHA_1 -> {
                     if (sha1 == null) {
                         sha1 = publicKey.toSha1String()
@@ -207,6 +216,7 @@ public data class LegacyCertificatePinner internal constructor(
 
                     pin.hash == sha1
                 }
+
                 else -> {
                     println("CertificatePinner: Unsupported hashAlgorithm: ${pin.hashAlgorithm}")
                     false
@@ -299,9 +309,9 @@ public data class LegacyCertificatePinner internal constructor(
         return publicKeyRef.use {
             val publicKeyAttributes = SecKeyCopyAttributes(publicKeyRef)
             val publicKeyTypePointer = CFDictionaryGetValue(publicKeyAttributes, kSecAttrKeyType)
-            val publicKeyType = CFBridgingRelease(publicKeyTypePointer) as NSString
+            val publicKeyType = CFBridgingRelease(CFRetain(publicKeyTypePointer)) as NSString
             val publicKeySizePointer = CFDictionaryGetValue(publicKeyAttributes, kSecAttrKeySizeInBits)
-            val publicKeySize = CFBridgingRelease(publicKeySizePointer) as NSNumber
+            val publicKeySize = CFBridgingRelease(CFRetain(publicKeySizePointer)) as NSNumber
 
             CFBridgingRelease(publicKeyAttributes)
 
@@ -328,8 +338,8 @@ public data class LegacyCertificatePinner internal constructor(
      */
     @OptIn(ExperimentalForeignApi::class)
     private fun checkValidKeyType(publicKeyType: NSString, publicKeySize: NSNumber): Boolean {
-        val keyTypeRSA = CFBridgingRelease(kSecAttrKeyTypeRSA) as NSString
-        val keyTypeECSECPrimeRandom = CFBridgingRelease(kSecAttrKeyTypeECSECPrimeRandom) as NSString
+        val keyTypeRSA = CFBridgingRelease(CFRetain(kSecAttrKeyTypeRSA)) as NSString
+        val keyTypeECSECPrimeRandom = CFBridgingRelease(CFRetain(kSecAttrKeyTypeECSECPrimeRandom)) as NSString
 
         val size: Int = publicKeySize.intValue.toInt()
         val keys = when (publicKeyType) {
@@ -347,8 +357,8 @@ public data class LegacyCertificatePinner internal constructor(
      */
     @OptIn(ExperimentalForeignApi::class)
     private fun getAsn1HeaderBytes(publicKeyType: NSString, publicKeySize: NSNumber): IntArray {
-        val keyTypeRSA = CFBridgingRelease(kSecAttrKeyTypeRSA) as NSString
-        val keyTypeECSECPrimeRandom = CFBridgingRelease(kSecAttrKeyTypeECSECPrimeRandom) as NSString
+        val keyTypeRSA = CFBridgingRelease(CFRetain(kSecAttrKeyTypeRSA)) as NSString
+        val keyTypeECSECPrimeRandom = CFBridgingRelease(CFRetain(kSecAttrKeyTypeECSECPrimeRandom)) as NSString
 
         val size: Int = publicKeySize.intValue.toInt()
         val keys = when (publicKeyType) {
@@ -393,6 +403,8 @@ public data class LegacyCertificatePinner internal constructor(
 
     /**
      * Builds a configured [LegacyCertificatePinner].
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.certificates.LegacyCertificatePinner.Builder)
      */
     public data class Builder(
         private val pinnedCertificates: MutableList<LegacyPinnedCertificate> = mutableListOf(),
@@ -400,6 +412,8 @@ public data class LegacyCertificatePinner internal constructor(
     ) {
         /**
          * Pins certificates for `pattern`.
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.certificates.LegacyCertificatePinner.Builder.add)
          *
          * @param pattern lower-case host name or wildcard pattern such as `*.example.com`.
          * @param pins SHA-256 or SHA-1 hashes. Each pin is a hash of a certificate's
@@ -420,6 +434,9 @@ public data class LegacyCertificatePinner internal constructor(
         /**
          * Whether to valid the trust of the server
          * https://developer.apple.com/documentation/security/2980705-sectrustevaluatewitherror
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.certificates.LegacyCertificatePinner.Builder.validateTrust)
+         *
          * @param validateTrust
          * @return The [Builder] so calls can be chained
          */
@@ -429,6 +446,9 @@ public data class LegacyCertificatePinner internal constructor(
 
         /**
          * Build into a [LegacyCertificatePinner]
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.certificates.LegacyCertificatePinner.Builder.build)
+         *
          * @return [LegacyCertificatePinner]
          */
         public fun build(): LegacyCertificatePinner = LegacyCertificatePinner(

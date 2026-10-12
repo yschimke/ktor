@@ -1,16 +1,23 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
+@file:OptIn(InternalAPI::class)
 
 package io.ktor.http
 
 import io.ktor.util.*
 import io.ktor.util.date.*
-import kotlin.jvm.*
+import io.ktor.utils.io.*
+import kotlinx.serialization.Serializable
+import kotlin.io.encoding.Base64
+import kotlin.jvm.JvmName
 
 /**
  * Represents a cookie with name, content and a set of settings such as expiration, visibility and security.
  * A cookie with neither [expires] nor [maxAge] is a session cookie.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.Cookie)
  *
  * @property name
  * @property value
@@ -23,6 +30,7 @@ import kotlin.jvm.*
  * @property httpOnly only transfer cookie over HTTP, no access from JavaScript
  * @property extensions additional cookie extensions
  */
+@Serializable
 public data class Cookie(
     val name: String,
     val value: String,
@@ -35,29 +43,49 @@ public data class Cookie(
     val secure: Boolean = false,
     val httpOnly: Boolean = false,
     val extensions: Map<String, String?> = emptyMap()
-)
+) : JvmSerializable {
+    private fun writeReplace(): Any = JvmSerializerReplacement(CookieJvmSerializer, this)
+}
+
+internal object CookieJvmSerializer : JvmSerializer<Cookie> {
+    override fun jvmSerialize(value: Cookie): ByteArray =
+        renderSetCookieHeader(value).encodeToByteArray()
+
+    override fun jvmDeserialize(value: ByteArray): Cookie =
+        parseServerSetCookieHeader(value.decodeToString())
+}
 
 /**
  * Cooke encoding strategy
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.CookieEncoding)
  */
 public enum class CookieEncoding {
     /**
      * No encoding (could be dangerous)
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.CookieEncoding.RAW)
      */
     RAW,
 
     /**
      * Double quotes with slash-escaping
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.CookieEncoding.DQUOTES)
      */
     DQUOTES,
 
     /**
      * URI encoding
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.CookieEncoding.URI_ENCODING)
      */
     URI_ENCODING,
 
     /**
      * BASE64 encoding
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.CookieEncoding.BASE64_ENCODING)
      */
     BASE64_ENCODING
 }
@@ -66,8 +94,28 @@ private val loweredPartNames = setOf("max-age", "expires", "domain", "path", "se
 
 /**
  * Parse server's `Set-Cookie` header value
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.parseServerSetCookieHeader)
  */
-public fun parseServerSetCookieHeader(cookiesHeader: String): Cookie {
+public fun parseServerSetCookieHeader(cookiesHeader: String): Cookie =
+    parseServerSetCookieHeader(cookiesHeader, String::fromCookieToGmtDate)
+
+/**
+ * Parse server's [cookiesHeader], using [expiresParser] in place of the built-in `Expires` date parser.
+ *
+ * [expiresParser] is called only when `Expires` is present, with the value unquoted and trimmed.
+ * Returning `null` or throwing leaves [Cookie.expires] unset and keeps the cookie; the built-in parser
+ * is not retried.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.parseServerSetCookieHeader)
+ *
+ * @param cookiesHeader a single `Set-Cookie` header value.
+ * @param expiresParser the replacement date parser.
+ * @return the parsed cookie.
+ * @throws NoSuchElementException if [cookiesHeader] holds no cookie name/value pair.
+ * @throws IllegalArgumentException if the `$x-enc` marker names an unknown [CookieEncoding].
+ */
+public fun parseServerSetCookieHeader(cookiesHeader: String, expiresParser: (String) -> GMTDate?): Cookie {
     val asMap = parseClientCookiesHeader(cookiesHeader, false)
     val first = asMap.entries.first { !it.key.startsWith("$") }
     val encoding = asMap["\$x-enc"]?.let { CookieEncoding.valueOf(it) } ?: CookieEncoding.RAW
@@ -77,8 +125,8 @@ public fun parseServerSetCookieHeader(cookiesHeader: String): Cookie {
         name = first.key,
         value = decodeCookieValue(first.value, encoding),
         encoding = encoding,
-        maxAge = loweredMap["max-age"]?.toIntClamping(),
-        expires = loweredMap["expires"]?.fromCookieToGmtDate(),
+        maxAge = loweredMap["max-age"]?.toMaxAgeOrNull(),
+        expires = runCatching { loweredMap["expires"]?.let { expiresParser(it.trim()) } }.getOrNull(),
         domain = loweredMap["domain"],
         path = loweredMap["path"],
         secure = "secure" in loweredMap,
@@ -91,10 +139,7 @@ public fun parseServerSetCookieHeader(cookiesHeader: String): Cookie {
 
 private val clientCookieHeaderPattern = """(^|;)\s*([^;=\{\}\s]+)\s*(=\s*("[^"]*"|[^;]*))?""".toRegex()
 
-/**
- * Parse client's `Cookie` header value
- */
-public fun parseClientCookiesHeader(cookiesHeader: String, skipEscaped: Boolean = true): Map<String, String> =
+private fun clientCookies(cookiesHeader: String, skipEscaped: Boolean): Sequence<Pair<String, String>> =
     clientCookieHeaderPattern.findAll(cookiesHeader)
         .map { (it.groups[2]?.value ?: "") to (it.groups[4]?.value ?: "") }
         .filter { !skipEscaped || !it.first.startsWith("$") }
@@ -105,10 +150,34 @@ public fun parseClientCookiesHeader(cookiesHeader: String, skipEscaped: Boolean 
                 cookie
             }
         }
-        .toMap()
+
+/**
+ * Parse client's `Cookie` header value into a list of name/value pairs.
+ *
+ * Unlike [parseClientCookiesHeader], this variant preserves every cookie in the header,
+ * including multiple entries that share the same name (allowed by RFC 6265 section 5.4).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.parseClientCookies)
+ */
+public fun parseClientCookies(cookiesHeader: String, skipEscaped: Boolean = true): List<Pair<String, String>> =
+    clientCookies(cookiesHeader, skipEscaped).toList()
+
+/**
+ * Parse client's `Cookie` header value.
+ *
+ * Note that when the header contains multiple cookies with the same name, only the last
+ * value is retained. Use [parseClientCookies] to preserve all entries as required by
+ * RFC 6265 section 5.4.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.parseClientCookiesHeader)
+ */
+public fun parseClientCookiesHeader(cookiesHeader: String, skipEscaped: Boolean = true): Map<String, String> =
+    clientCookies(cookiesHeader, skipEscaped).toMap()
 
 /**
  * Format `Set-Cookie` header value
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.renderSetCookieHeader)
  */
 public fun renderSetCookieHeader(cookie: Cookie): String = with(cookie) {
     renderSetCookieHeader(
@@ -127,6 +196,8 @@ public fun renderSetCookieHeader(cookie: Cookie): String = with(cookie) {
 
 /**
  * Format `Cookie` header value
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.renderCookieHeader)
  */
 public fun renderCookieHeader(cookie: Cookie): String = with(cookie) {
     "$name=${encodeCookieValue(value, encoding)}"
@@ -134,6 +205,8 @@ public fun renderCookieHeader(cookie: Cookie): String = with(cookie) {
 
 /**
  * Format `Set-Cookie` header value
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.renderSetCookieHeader)
  */
 public fun renderSetCookieHeader(
     name: String,
@@ -164,39 +237,44 @@ public fun renderSetCookieHeader(
 
 /**
  * Encode cookie value using the specified [encoding]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.encodeCookieValue)
  */
 public fun encodeCookieValue(value: String, encoding: CookieEncoding): String = when (encoding) {
-    CookieEncoding.RAW -> when {
-        value.any { it.shouldEscapeInCookies() } ->
-            throw IllegalArgumentException(
-                "The cookie value contains characters that cannot be encoded in RAW format. " +
-                    " Consider URL_ENCODING mode"
-            )
-        else -> value
-    }
+    CookieEncoding.RAW -> value
+
     CookieEncoding.DQUOTES -> when {
         value.contains('"') -> throw IllegalArgumentException(
             "The cookie value contains characters that cannot be encoded in DQUOTES format. " +
                 "Consider URL_ENCODING mode"
         )
+
         value.any { it.shouldEscapeInCookies() } -> "\"$value\""
+
         else -> value
     }
-    CookieEncoding.BASE64_ENCODING -> value.encodeBase64()
+
+    CookieEncoding.BASE64_ENCODING -> Base64.encode(value.encodeToByteArray())
+
     CookieEncoding.URI_ENCODING -> value.encodeURLParameter(spaceToPlus = true)
 }
 
 /**
  * Decode cookie value using the specified [encoding]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.decodeCookieValue)
  */
 public fun decodeCookieValue(encodedValue: String, encoding: CookieEncoding): String = when (encoding) {
     CookieEncoding.RAW, CookieEncoding.DQUOTES -> when {
         encodedValue.trimStart().startsWith("\"") && encodedValue.trimEnd().endsWith("\"") ->
             encodedValue.trim().removeSurrounding("\"")
+
         else -> encodedValue
     }
+
     CookieEncoding.URI_ENCODING -> encodedValue.decodeURLQueryComponent(plusIsSpace = true)
-    CookieEncoding.BASE64_ENCODING -> encodedValue.decodeBase64String()
+
+    CookieEncoding.BASE64_ENCODING -> Base64.decode(encodedValue).decodeToString()
 }
 
 private fun String.assertCookieName() = when {
@@ -224,4 +302,18 @@ private inline fun cookiePartFlag(name: String, value: Boolean) =
 private inline fun cookiePartExt(name: String, value: String?) =
     if (value == null) cookiePartFlag(name, true) else cookiePart(name, value, CookieEncoding.RAW)
 
-private fun String.toIntClamping(): Int = toLong().coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+/**
+ * Parses the `Max-Age` attribute value as a number of seconds clamped to the [Int] range.
+ *
+ * Returns `null` when the value is not a decimal number, as RFC 6265 (section 5.2.2) requires such
+ * an attribute to be ignored. A negative value means the cookie expires immediately, so it maps to `0`.
+ */
+private fun String.toMaxAgeOrNull(): Int? {
+    val digitsStart = if (startsWith('-')) 1 else 0
+    if (digitsStart > lastIndex) return null
+    for (index in digitsStart..lastIndex) {
+        if (this[index] !in '0'..'9') return null
+    }
+    if (digitsStart == 1) return 0
+    return toLongOrNull()?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() ?: Int.MAX_VALUE
+}

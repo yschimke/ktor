@@ -9,14 +9,20 @@ import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.util.*
 import io.ktor.utils.io.*
-import kotlinx.coroutines.*
-import kotlin.coroutines.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.coroutineContext
 
 /**
- * Default user agent to use in ktor client.
+ * Default user agent to use in a Ktor client.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.KTOR_DEFAULT_USER_AGENT)
  */
 @InternalAPI
-public val KTOR_DEFAULT_USER_AGENT: String = "Ktor client"
+public val KTOR_DEFAULT_USER_AGENT: String = "ktor-client"
 
 private val DATE_HEADERS = setOf(
     HttpHeaders.Date,
@@ -28,6 +34,8 @@ private val DATE_HEADERS = setOf(
 
 /**
  * Merge headers from [content] and [requestHeaders] according to [OutgoingContent] properties
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.mergeHeaders)
  */
 @InternalAPI
 public fun mergeHeaders(
@@ -72,9 +80,11 @@ public fun mergeHeaders(
 
 /**
  * Returns current call context if exists, otherwise null.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.callContext)
  */
 @InternalAPI
-public suspend fun callContext(): CoroutineContext = coroutineContext[KtorCallContextElement]!!.callContext
+public suspend fun callContext(): CoroutineContext = currentCoroutineContext()[KtorCallContextElement]!!.callContext
 
 /**
  * Coroutine context element containing call job.
@@ -83,7 +93,7 @@ internal class KtorCallContextElement(val callContext: CoroutineContext) : Corou
     override val key: CoroutineContext.Key<*>
         get() = KtorCallContextElement
 
-    public companion object : CoroutineContext.Key<KtorCallContextElement>
+    companion object : CoroutineContext.Key<KtorCallContextElement>
 }
 
 /**
@@ -92,11 +102,12 @@ internal class KtorCallContextElement(val callContext: CoroutineContext) : Corou
  */
 @OptIn(InternalCoroutinesApi::class)
 internal suspend inline fun attachToUserJob(callJob: Job) {
-    val userJob = coroutineContext[Job] ?: return
+    val userJob = currentCoroutineContext()[Job] ?: return
 
     val cleanupHandler = userJob.invokeOnCompletion(onCancelling = true) { cause ->
         cause ?: return@invokeOnCompletion
-        callJob.cancel(kotlinx.coroutines.CancellationException(cause.message))
+        val cancellation = cause as? CancellationException ?: CancellationException(cause.message)
+        callJob.cancel(cancellation)
     }
 
     callJob.invokeOnCompletion {

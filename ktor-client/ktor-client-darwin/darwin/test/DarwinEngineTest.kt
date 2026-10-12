@@ -1,31 +1,39 @@
+/*
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
+package io.ktor.client.engine.darwin
+
 import io.ktor.client.*
-import io.ktor.client.engine.darwin.*
 import io.ktor.client.engine.darwin.internal.*
+import io.ktor.client.engine.darwin.utils.*
 import io.ktor.client.plugins.websocket.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import io.ktor.client.tests.utils.*
+import io.ktor.client.test.base.*
 import io.ktor.http.*
-import io.ktor.test.dispatcher.*
+import io.ktor.test.*
+import io.ktor.utils.io.*
 import io.ktor.websocket.*
-import kotlinx.cinterop.*
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.UnsafeNumber
 import kotlinx.coroutines.*
-import platform.Foundation.*
 import platform.Foundation.NSHTTPCookieStorage.Companion.sharedHTTPCookieStorage
+import platform.Foundation.NSOperationQueue
+import platform.Foundation.NSURLSession
+import platform.Foundation.NSURLSessionConfiguration
+import platform.Foundation.setValue
 import kotlin.test.*
+import kotlin.time.Duration.Companion.seconds
 
-/*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
- */
-
-class DarwinEngineTest {
+class DarwinEngineTest : ClientEngineTest<DarwinClientEngineConfig>(Darwin) {
 
     @Test
     fun testRequestInRunBlockingDispatchersDefault() = runBlocking(Dispatchers.Default) {
         val client = HttpClient(Darwin)
 
         try {
-            withTimeout(1000) {
+            withTimeout(30.seconds) {
                 val response = client.get(TEST_SERVER)
                 assertEquals("Hello, world!", response.bodyAsText())
             }
@@ -39,7 +47,7 @@ class DarwinEngineTest {
         val client = HttpClient(Darwin)
 
         try {
-            withTimeout(1000) {
+            withTimeout(30.seconds) {
                 val response = client.get(TEST_SERVER)
                 assertEquals("Hello, world!", response.bodyAsText())
             }
@@ -53,7 +61,7 @@ class DarwinEngineTest {
         val client = HttpClient(Darwin)
 
         try {
-            withTimeout(1000) {
+            withTimeout(30.seconds) {
                 val response = client.get(TEST_SERVER)
                 assertEquals("Hello, world!", response.bodyAsText())
             }
@@ -63,30 +71,18 @@ class DarwinEngineTest {
     }
 
     @Test
-    fun testQueryWithCyrillic() = runBlocking {
-        val client = HttpClient(Darwin)
-
-        try {
-            withTimeout(1000) {
-                val response = client.get("$TEST_SERVER/echo_query?привет")
-                assertEquals("привет=[]", response.bodyAsText())
-            }
-        } finally {
-            client.close()
+    fun testQueryWithCyrillic() = testClient(timeout = 1.seconds) {
+        test { client ->
+            val response = client.get("$TEST_SERVER/echo_query?привет")
+            assertEquals("привет=[]", response.bodyAsText())
         }
     }
 
     @Test
-    fun testQueryWithMultipleParams() = runBlocking {
-        val client = HttpClient(Darwin)
-
-        try {
-            withTimeout(1000) {
-                val response = client.get("$TEST_SERVER/echo_query?asd=qwe&asd=123&qwe&zxc=vbn")
-                assertEquals("asd=[qwe, 123], qwe=[], zxc=[vbn]", response.bodyAsText())
-            }
-        } finally {
-            client.close()
+    fun testQueryWithMultipleParams() = testClient(timeout = 1.seconds) {
+        test { client ->
+            val response = client.get("$TEST_SERVER/echo_query?asd=qwe&asd=123&qwe&zxc=vbn")
+            assertEquals("asd=[qwe, 123], qwe=[], zxc=[vbn]", response.bodyAsText())
         }
     }
 
@@ -104,25 +100,26 @@ class DarwinEngineTest {
         assertTrue(
             stringToNSUrlString("http://привет.привет/") in possibleResults
         )
+        assertEquals(
+            "https://example.com/path;param=my%3Bvalue/segment",
+            stringToNSUrlString("https://example.com/path;param=my%3Bvalue/segment")
+        )
     }
 
     @Test
-    fun testCookieIsNotPersistedByDefault() = runBlocking {
-        val client = HttpClient(Darwin)
-        try {
+    fun testCookieIsNotPersistedByDefault() = testClient {
+        test { client ->
             client.get("$TEST_SERVER/cookies")
             val result = client.get("$TEST_SERVER/cookies/dump")
                 .bodyAsText()
 
             assertEquals("Cookies: ", result)
-        } finally {
-            client.close()
         }
     }
 
     @Test
-    fun testCookiePersistedWithSessionStore() = runBlocking {
-        val client = HttpClient(Darwin) {
+    fun testCookiePersistedWithSessionStore() = testClient {
+        config {
             engine {
                 configureSession {
                     setHTTPCookieStorage(sharedHTTPCookieStorage)
@@ -130,20 +127,18 @@ class DarwinEngineTest {
             }
         }
 
-        try {
+        test { client ->
             client.get("$TEST_SERVER/cookies")
             val result = client.get("$TEST_SERVER/cookies/dump")
                 .bodyAsText()
 
             assertEquals("Cookies: hello-cookie=my-awesome-value", result)
-        } finally {
-            client.close()
         }
     }
 
     @Test
-    fun testOverrideDefaultSession(): Unit = runBlocking {
-        val client = HttpClient(Darwin) {
+    fun testOverrideDefaultSession(): Unit = testClient {
+        config {
             val delegate = KtorNSURLSessionDelegate()
             val session = NSURLSession.sessionWithConfiguration(
                 NSURLSessionConfiguration.defaultSessionConfiguration(),
@@ -155,17 +150,15 @@ class DarwinEngineTest {
             }
         }
 
-        try {
+        test { client ->
             val response = client.get(TEST_SERVER)
             assertEquals("Hello, world!", response.bodyAsText())
-        } finally {
-            client.close()
         }
     }
 
     @Test
-    fun testOverrideDefaultSessionWithWebSockets(): Unit = runBlocking {
-        val client = HttpClient(Darwin) {
+    fun testOverrideDefaultSessionWithWebSockets(): Unit = testClient {
+        config {
             val delegate = KtorNSURLSessionDelegate()
             val session = NSURLSession.sessionWithConfiguration(
                 NSURLSessionConfiguration.defaultSessionConfiguration(),
@@ -178,20 +171,39 @@ class DarwinEngineTest {
             install(WebSockets)
         }
 
-        try {
+        test { client ->
             val session = client.webSocketSession("$TEST_WEBSOCKET_SERVER/websockets/echo")
             session.send("test")
             val response = session.incoming.receive() as Frame.Text
             assertEquals("test", response.readText())
             session.close()
-        } finally {
-            client.close()
+        }
+    }
+
+    // Issue: KTOR-7355
+    @Test
+    fun testOverrideDefaultSessionWithoutDelegate() {
+        val result = runCatching {
+            HttpClient(Darwin) {
+                engine {
+                    usePreconfiguredSession(
+                        session = NSURLSession.sessionWithConfiguration(
+                            NSURLSessionConfiguration.defaultSessionConfiguration()
+                        ),
+                        delegate = KtorNSURLSessionDelegate(),
+                    )
+                }
+            }
+        }
+
+        assertFailsWith<IllegalArgumentException> {
+            result.getOrThrow()
         }
     }
 
     @Test
-    fun testConfigureRequest(): Unit = runBlocking {
-        val client = HttpClient(Darwin) {
+    fun testConfigureRequest(): Unit = testClient {
+        config {
             engine {
                 configureRequest {
                     setValue("my header value", forHTTPHeaderField = "XCustomHeader")
@@ -199,54 +211,102 @@ class DarwinEngineTest {
             }
         }
 
-        val response = client.get("$TEST_SERVER/headers/echo?headerName=XCustomHeader")
-        assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals("my header value", response.bodyAsText())
+        test { client ->
+            val response = client.get("$TEST_SERVER/headers/echo?headerName=XCustomHeader")
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("my header value", response.bodyAsText())
+        }
     }
 
     @OptIn(UnsafeNumber::class, ExperimentalForeignApi::class)
     @Test
-    fun testConfigureWebsocketRequest(): Unit = runBlocking {
+    fun testConfigureWebsocketRequest(): Unit = testClient {
         var customChallengeCalled = false
-        val client = HttpClient(Darwin) {
+        config {
             engine {
                 handleChallenge { _, _, challenge, completionHandler ->
                     customChallengeCalled = true
-                    challenge.protectionSpace.serverTrust?.let {
-                        if (challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust) {
-                            val credential = NSURLCredential.credentialForTrust(it)
-                            completionHandler(NSURLSessionAuthChallengeUseCredential, credential)
-                        }
-                    }
+                    trustAnyCertificate(challenge, completionHandler)
                 }
             }
 
             install(WebSockets)
         }
 
-        val session = client.webSocketSession("wss://127.0.0.1:8089/websockets/echo")
-        session.send("test")
-        val response = session.incoming.receive() as Frame.Text
-        assertEquals("test", response.readText())
-        assertTrue(customChallengeCalled)
-        session.close()
+        test { client ->
+            val session = client.webSocketSession("wss://127.0.0.1:8089/websockets/echo")
+            session.send("test")
+            val response = session.incoming.receive() as Frame.Text
+            assertEquals("test", response.readText())
+            assertTrue(customChallengeCalled)
+            session.close()
+        }
     }
 
     @Test
-    fun testWebSocketPingInterval() = testSuspend {
-        val client = HttpClient(Darwin) {
+    fun testWebSocketPingInterval() = testClient {
+        config {
             install(WebSockets) {
-                pingInterval = 1000
+                pingInterval = 1.seconds
             }
         }
 
-        assertFailsWith<TimeoutCancellationException> {
-            client.webSocket("$TEST_WEBSOCKET_SERVER/websockets/echo") {
-                withTimeout(5000) {
-                    for (frame in incoming) {
+        test { client ->
+            assertFailsWith<TimeoutCancellationException> {
+                client.webSocket("$TEST_WEBSOCKET_SERVER/websockets/echo") {
+                    withTimeout(5.seconds) {
+                        for (frame in incoming) {
+                        }
                     }
                 }
             }
+        }
+    }
+
+    @OptIn(UnsafeNumber::class)
+    @Test
+    fun testRethrowExceptionThrownDuringCustomChallenge() = runBlocking {
+        val challengeException = Exception("Challenge failed")
+
+        val client = HttpClient(Darwin) {
+            engine {
+                handleChallenge { _, _, _, _ -> throw challengeException }
+            }
+        }
+
+        val thrownException = assertFails { client.get(TEST_SERVER_TLS) }
+        assertSame(thrownException, challengeException, "Expected exception to be rethrown")
+    }
+
+    @Test
+    fun testExecuteAfterSessionClose() = runTest {
+        val config = DarwinClientEngineConfig()
+        val session = DarwinSession(config, null)
+
+        session.close()
+        launch {
+            val request = request { url(TEST_SERVER) }.build()
+            session.execute(request, coroutineContext)
+            fail("Execution expected to be cancelled")
+        }
+    }
+
+    @OptIn(InternalAPI::class)
+    @Test
+    fun testWebSocketExecuteAfterSessionClose() = runTest {
+        val config = DarwinClientEngineConfig()
+        val session = DarwinSession(config, null)
+
+        session.close()
+        launch {
+            val request = request {
+                url(TEST_WEBSOCKET_SERVER)
+                body = object : ClientUpgradeContent() {
+                    override fun verify(headers: Headers) = Unit
+                }
+            }.build()
+            session.execute(request, coroutineContext)
+            fail("Execution expected to be cancelled")
         }
     }
 

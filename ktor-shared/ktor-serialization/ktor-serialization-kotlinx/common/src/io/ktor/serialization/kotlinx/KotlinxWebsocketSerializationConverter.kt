@@ -4,20 +4,18 @@
 
 package io.ktor.serialization.kotlinx
 
-import io.ktor.http.*
-import io.ktor.http.content.*
 import io.ktor.serialization.*
-import io.ktor.util.*
 import io.ktor.util.reflect.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.charsets.*
-import io.ktor.utils.io.core.*
 import io.ktor.websocket.*
 import kotlinx.serialization.*
 
 /**
  * Creates a converter for WebSocket serializing with the specified string [format] and
  * [defaultCharset] (optional, usually it is UTF-8).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.kotlinx.KotlinxWebsocketSerializationConverter)
  */
 @OptIn(InternalSerializationApi::class, ExperimentalSerializationApi::class)
 public class KotlinxWebsocketSerializationConverter(
@@ -31,6 +29,7 @@ public class KotlinxWebsocketSerializationConverter(
         }
     }
 
+    @OptIn(InternalAPI::class)
     override suspend fun serialize(charset: Charset, typeInfo: TypeInfo, value: Any?): Frame {
         val serializer = try {
             format.serializersModule.serializerForTypeInfo(typeInfo)
@@ -57,6 +56,7 @@ public class KotlinxWebsocketSerializationConverter(
                     )
                 }
             }
+
             is BinaryFormat -> {
                 if (content is Frame.Binary) {
                     format.decodeFromByteArray(serializer, content.readBytes())
@@ -67,6 +67,7 @@ public class KotlinxWebsocketSerializationConverter(
                     )
                 }
             }
+
             else -> {
                 error("Unsupported format $format")
             }
@@ -88,10 +89,12 @@ public class KotlinxWebsocketSerializationConverter(
                 val content = format.encodeToString(serializer as KSerializer<Any?>, value)
                 Frame.Text(content)
             }
+
             is BinaryFormat -> {
                 val content = format.encodeToByteArray(serializer as KSerializer<Any?>, value)
                 Frame.Binary(true, content)
             }
+
             else -> error("Unsupported format $format")
         }
     }

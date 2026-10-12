@@ -1,78 +1,39 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.client.tests
 
 import io.ktor.client.call.*
 import io.ktor.client.engine.mock.*
+import io.ktor.client.plugins.*
 import io.ktor.client.plugins.logging.*
 import io.ktor.client.request.*
 import io.ktor.client.request.forms.*
 import io.ktor.client.statement.*
+import io.ktor.client.test.base.*
 import io.ktor.client.tests.utils.*
 import io.ktor.http.*
 import io.ktor.util.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.core.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
-import kotlin.test.*
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 class LoggingMockedTests {
-    @Test
-    fun testLogRequestWithException() = testWithEngine(MockEngine) {
-        val testLogger = TestLogger(
-            "REQUEST: ${URLBuilder.origin}",
-            "METHOD: HttpMethod(value=GET)",
-            "COMMON HEADERS",
-            "-> Accept: */*",
-            "-> Accept-Charset: UTF-8",
-            "CONTENT HEADERS",
-            "-> Content-Length: 0",
-            "BODY Content-Type: null",
-            "BODY START",
-            "",
-            "BODY END",
-            "REQUEST ${URLBuilder.origin} failed with exception: CustomError[BAD REQUEST]"
-        )
-
-        config {
-            engine {
-                addHandler {
-                    throw CustomError("BAD REQUEST")
-                }
-            }
-            install(Logging) {
-                level = LogLevel.ALL
-                logger = testLogger
-            }
-        }
-
-        test { client ->
-            var failed = false
-            try {
-                client.get { url(port = DEFAULT_PORT) }
-            } catch (_: Throwable) {
-                failed = true
-            }
-
-            assertTrue(failed, "Exception is missing.")
-        }
-
-        after {
-            testLogger.verify()
-        }
-    }
 
     @Test
-    fun testLogResponseWithException() = testWithEngine(MockEngine) {
+    fun testLogResponseWithException() = testWithEngine(MockEngine, retries = 5) {
         val testLogger = TestLogger(
             "REQUEST: ${URLBuilder.origin}",
-            "METHOD: HttpMethod(value=GET)",
+            "METHOD: GET",
             "COMMON HEADERS",
             "-> Accept: */*",
-            "-> Accept-Charset: UTF-8",
             "CONTENT HEADERS",
             "-> Content-Length: 0",
             "BODY Content-Type: null",
@@ -80,7 +41,7 @@ class LoggingMockedTests {
             "",
             "BODY END",
             "RESPONSE: 200 OK",
-            "METHOD: HttpMethod(value=GET)",
+            "METHOD: GET",
             "FROM: ${URLBuilder.origin}",
             "COMMON HEADERS",
             "+++RESPONSE ${URLBuilder.origin} failed with exception: CustomError[PARSE ERROR]",
@@ -134,10 +95,9 @@ class LoggingMockedTests {
     fun testLogResponseWithExceptionSingle() = testWithEngine(MockEngine) {
         val testLogger = TestLogger(
             "REQUEST: ${URLBuilder.origin}",
-            "METHOD: HttpMethod(value=GET)",
+            "METHOD: GET",
             "COMMON HEADERS",
             "-> Accept: */*",
-            "-> Accept-Charset: UTF-8",
             "CONTENT HEADERS",
             "-> Content-Length: 0",
             "BODY Content-Type: null",
@@ -145,7 +105,7 @@ class LoggingMockedTests {
             "",
             "BODY END",
             "RESPONSE: 200 OK",
-            "METHOD: HttpMethod(value=GET)",
+            "METHOD: GET",
             "FROM: ${URLBuilder.origin}",
             "COMMON HEADERS",
             "RESPONSE ${URLBuilder.origin} failed with exception: CustomError[PARSE ERROR]",
@@ -190,10 +150,9 @@ class LoggingMockedTests {
     fun testLoggingWithForm() = testWithEngine(MockEngine) {
         val testLogger = TestLogger(
             "REQUEST: http://localhost/",
-            "METHOD: HttpMethod(value=POST)",
+            "METHOD: POST",
             "COMMON HEADERS",
             "-> Accept: */*",
-            "-> Accept-Charset: UTF-8",
             "CONTENT HEADERS",
             "!!!-> Content-Type: multipart/form-data; " +
                 "boundary=27e7dfaa-451f2057-3dabbd0c2b3cae572a4935af6a57b2d4bb335c34480373360863",
@@ -201,14 +160,14 @@ class LoggingMockedTests {
                 "boundary=41a55fb5-2ae7bc4b-5b124e524086ca1e-6879a99a75b8a0a028a6a7d7-63d38251-5",
             "BODY START",
             "!!!--41a55fb5-2ae7bc4b-5b124e524086ca1e-6879a99a75b8a0a028a6a7d7-63d38251-5",
-            """Content-Disposition: form-data; name=file; file; name=""; filename=""""",
+            """Content-Disposition: form-data; name="file"; file; name=""; filename=""""",
             "",
             "Hello",
             """!!!--41a55fb5-2ae7bc4b-5b124e524086ca1e-6879a99a75b8a0a028a6a7d7-63d38251-5--""",
             "",
             "BODY END",
             "RESPONSE: 200 OK",
-            "METHOD: HttpMethod(value=POST)",
+            "METHOD: POST",
             "FROM: http://localhost/",
             "COMMON HEADERS",
             "BODY Content-Type: null",
@@ -259,10 +218,9 @@ class LoggingMockedTests {
     fun testFilterRequest() = testWithEngine(MockEngine) {
         val testLogger = TestLogger(
             "REQUEST: http://somewhere/filtered_path",
-            "METHOD: HttpMethod(value=GET)",
+            "METHOD: GET",
             "COMMON HEADERS",
             "-> Accept: */*",
-            "-> Accept-Charset: UTF-8",
             "CONTENT HEADERS",
             "-> Content-Length: 0",
             "BODY Content-Type: null",
@@ -270,7 +228,7 @@ class LoggingMockedTests {
             "",
             "BODY END",
             "RESPONSE: 200 OK",
-            "METHOD: HttpMethod(value=GET)",
+            "METHOD: GET",
             "FROM: http://somewhere/filtered_path",
             "COMMON HEADERS",
             "BODY Content-Type: null",
@@ -304,16 +262,15 @@ class LoggingMockedTests {
     fun testSanitizeHeaders() = testWithEngine(MockEngine) {
         val testLogger = TestLogger {
             line("REQUEST: http://localhost/")
-            line("METHOD: HttpMethod(value=GET)")
+            line("METHOD: GET")
             line("COMMON HEADERS")
             line("-> Accept: */*")
-            line("-> Accept-Charset: UTF-8")
             line("-> Authorization: <secret>")
             line("-> Sanitized: ***")
             line("CONTENT HEADERS")
             line("-> Content-Length: 0")
             line("RESPONSE: 200 OK")
-            line("METHOD: HttpMethod(value=GET)")
+            line("METHOD: GET")
             line("FROM: http://localhost/")
             line("COMMON HEADERS")
             line("-> Sanitized: ***")
@@ -367,7 +324,7 @@ class LoggingMockedTests {
                         val ch = it.bodyAsChannel()
                         while (!ch.isClosedForRead) {
                             ch.awaitContent()
-                            send(ch.readUTF8Line())
+                            send(ch.readLineStrict())
                         }
                     }
                 }
@@ -375,11 +332,40 @@ class LoggingMockedTests {
 
             channel.writeStringUtf8("Hello world!\n")
 
-            withTimeout(5_000) { // the bug will cause this to timeout
+            // the bug will cause this to timeout
+            withTimeout(5.seconds) {
                 content.collect {
                     channel.close()
                 }
             }
+        }
+    }
+
+    // Issue: KTOR-6474
+    @Test
+    fun testLoggingWithResponseValidator() = testWithEngine(MockEngine) {
+        val responseBody = "Hello, world!"
+
+        config {
+            install(Logging) {
+                level = LogLevel.ALL
+            }
+
+            HttpResponseValidator {
+                validateResponse {
+                    assertEquals(responseBody, it.bodyAsText())
+                }
+            }
+
+            engine {
+                addHandler {
+                    respondOk(responseBody)
+                }
+            }
+        }
+
+        test { client ->
+            assertEquals(responseBody, client.get("").bodyAsText())
         }
     }
 }

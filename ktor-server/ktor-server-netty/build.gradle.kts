@@ -1,6 +1,14 @@
+/*
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
+import org.jetbrains.kotlin.gradle.targets.jvm.tasks.KotlinJvmTest
+
 description = ""
 
-val jetty_alpn_api_version: String by extra
+plugins {
+    id("ktorbuild.project.library")
+}
 
 val enableAlpnProp = project.hasProperty("enableAlpn")
 val osName = System.getProperty("os.name").lowercase()
@@ -15,12 +23,14 @@ val nativeClassifier: String? = if (enableAlpnProp) {
     null
 }
 
-kotlin.sourceSets {
-    jvmMain {
-        dependencies {
-            api(project(":ktor-server:ktor-server-core"))
+kotlin {
+    sourceSets {
+        jvmMain.dependencies {
+            api(projects.ktorServerCore)
 
+            api(libs.netty.codec)
             api(libs.netty.codec.http2)
+            api(libs.netty.codec.http3)
             api(libs.jetty.alpn.api)
 
             api(libs.netty.transport.native.kqueue)
@@ -29,24 +39,18 @@ kotlin.sourceSets {
                 api(libs.netty.tcnative.boringssl.static)
             }
         }
-    }
-    jvmTest {
-        dependencies {
-            api(project(":ktor-server:ktor-server-test-base"))
-            api(project(":ktor-server:ktor-server-test-suites"))
-            api(project(":ktor-server:ktor-server-core"))
+        jvmTest.dependencies {
+            implementation(projects.ktorServerTestBase)
+            implementation(projects.ktorServerTestSuites)
+            implementation(projects.ktorServerCore)
 
-            api(libs.netty.tcnative)
-            api(libs.netty.tcnative.boringssl.static)
-            api(libs.mockk)
-            api(libs.logback.classic)
-
-            api(project(":ktor-server:ktor-server-core", configuration = "testOutput"))
+            implementation(libs.netty.tcnative)
+            implementation(libs.netty.tcnative.boringssl.static)
+            implementation(libs.mockk)
         }
     }
 }
 
-val jvmTest: org.jetbrains.kotlin.gradle.targets.jvm.tasks.KotlinJvmTest by tasks
-jvmTest.apply {
+tasks.named<KotlinJvmTest>("jvmTest") {
     systemProperty("enable.http2", "true")
 }

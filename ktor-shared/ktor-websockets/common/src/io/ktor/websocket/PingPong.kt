@@ -4,8 +4,9 @@
 
 package io.ktor.websocket
 
-import io.ktor.util.*
 import io.ktor.util.date.*
+import io.ktor.util.logging.*
+import io.ktor.utils.io.ClosedByteChannelException
 import io.ktor.utils.io.charsets.*
 import io.ktor.utils.io.core.*
 import kotlinx.coroutines.*
@@ -42,6 +43,7 @@ internal fun CoroutineScope.ponger(
  * Launch pinger coroutine on [CoroutineScope] that is sending ping every specified [periodMillis] to [outgoing] channel,
  * waiting for and verifying client's pong frames. It is also handling [timeoutMillis] and sending timeout close frame
  */
+
 internal fun CoroutineScope.pinger(
     outgoing: SendChannel<Frame>,
     periodMillis: Long,
@@ -53,7 +55,9 @@ internal fun CoroutineScope.pinger(
     val channel = Channel<Frame.Pong>(Channel.UNLIMITED)
 
     launch(actorJob + PingerCoroutineName) {
-        LOGGER.trace("Starting WebSocket pinger coroutine with period $periodMillis ms and timeout $timeoutMillis ms")
+        LOGGER.trace {
+            "Starting WebSocket pinger coroutine with period $periodMillis ms and timeout $timeoutMillis ms"
+        }
         val random = Random(getTimeMillis())
         val pingIdBytes = ByteArray(32)
 
@@ -68,7 +72,7 @@ internal fun CoroutineScope.pinger(
                 }
 
                 random.nextBytes(pingIdBytes)
-                val pingMessage = "[ping ${hex(pingIdBytes)} ping]"
+                val pingMessage = "[ping ${pingIdBytes.toHexString()} ping]"
 
                 val rc = withTimeoutOrNull(timeoutMillis) {
                     LOGGER.trace("WebSocket Pinger: sending ping frame")
@@ -77,12 +81,12 @@ internal fun CoroutineScope.pinger(
                     // wait for valid pong message
                     while (true) {
                         val msg = channel.receive()
-                        if (String(msg.data, charset = Charsets.ISO_8859_1) == pingMessage) {
-                            LOGGER.trace("WebSocket Pinger: received valid pong frame $msg")
+                        if (msg.data.decodeToString(0, 0 + msg.data.size) == pingMessage) {
+                            LOGGER.trace { "WebSocket Pinger: received valid pong frame $msg" }
                             break
                         }
 
-                        LOGGER.trace("WebSocket Pinger: received invalid pong frame $msg, continue waiting")
+                        LOGGER.trace { "WebSocket Pinger: received invalid pong frame $msg, continue waiting" }
                     }
                 }
 
@@ -99,6 +103,7 @@ internal fun CoroutineScope.pinger(
         } catch (ignore: CancellationException) {
         } catch (ignore: ClosedReceiveChannelException) {
         } catch (ignore: ClosedSendChannelException) {
+        } catch (ignore: ClosedByteChannelException) {
         }
     }
 

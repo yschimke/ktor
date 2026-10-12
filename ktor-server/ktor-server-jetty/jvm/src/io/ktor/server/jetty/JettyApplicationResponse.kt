@@ -12,8 +12,8 @@ import io.ktor.utils.io.*
 import org.eclipse.jetty.server.*
 import javax.servlet.http.*
 import kotlin.coroutines.*
+import kotlin.time.Duration
 
-@Suppress("KDocMissingDocumentation")
 @InternalAPI
 public class JettyApplicationResponse(
     call: AsyncServletApplicationCall,
@@ -22,7 +22,8 @@ public class JettyApplicationResponse(
     engineContext: CoroutineContext,
     userContext: CoroutineContext,
     private val baseRequest: Request,
-    coroutineContext: CoroutineContext
+    coroutineContext: CoroutineContext,
+    idleTimeout: Duration,
 ) : AsyncServletApplicationResponse(
     call,
     servletRequest,
@@ -30,7 +31,8 @@ public class JettyApplicationResponse(
     engineContext,
     userContext,
     JettyUpgradeImpl,
-    coroutineContext
+    coroutineContext,
+    idleTimeout,
 ) {
 
     @UseHttp2Push

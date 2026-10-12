@@ -16,8 +16,6 @@ import kotlinx.coroutines.channels.*
 import java.net.*
 import kotlin.coroutines.*
 
-@Suppress("DEPRECATION")
-@OptIn(InternalAPI::class)
 internal class NettyHttp2ApplicationRequest(
     call: PipelineCall,
     coroutineContext: CoroutineContext,
@@ -47,7 +45,7 @@ internal class NettyHttp2ApplicationRequest(
     }
 
     @OptIn(ObsoleteCoroutinesApi::class)
-    val contentActor = actor<Http2DataFrame>(
+    val contentActor = actor(
         Dispatchers.Unconfined,
         kotlinx.coroutines.channels.Channel.UNLIMITED
     ) {

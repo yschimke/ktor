@@ -11,6 +11,8 @@ internal val ROOT_PATH = listOf("")
 /**
  * Take url parts from [urlString]
  * throws [URLParserException]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.takeFrom)
  */
 public fun URLBuilder.takeFrom(urlString: String): URLBuilder {
     if (urlString.isBlank()) return this
@@ -24,6 +26,8 @@ public fun URLBuilder.takeFrom(urlString: String): URLBuilder {
 
 /**
  * Thrown when failed to parse URL
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.URLParserException)
  */
 public class URLParserException(urlString: String, cause: Throwable) : IllegalStateException(
     "Fail to parse url: $urlString",
@@ -42,6 +46,12 @@ internal fun URLBuilder.takeFromUnsafe(urlString: String): URLBuilder {
         startIndex += schemeLength + 1
     }
 
+    // Special handling for data URLs
+    if (protocol.name == "data") {
+        host = urlString.substring(startIndex, endIndex)
+        return this
+    }
+
     // Auth & Host
     val slashCount = count(urlString, startIndex, endIndex, '/')
     startIndex += slashCount
@@ -54,6 +64,18 @@ internal fun URLBuilder.takeFromUnsafe(urlString: String): URLBuilder {
     if (protocol.name == "mailto") {
         require(slashCount == 0)
         parseMailto(urlString, startIndex, endIndex)
+        return this
+    }
+
+    if (protocol.name == "about") {
+        require(slashCount == 0)
+        host = urlString.substring(startIndex, endIndex)
+        return this
+    }
+
+    if (protocol.name == "tel") {
+        require(slashCount == 0)
+        host = urlString.substring(startIndex, endIndex)
         return this
     }
 
@@ -85,31 +107,36 @@ internal fun URLBuilder.takeFromUnsafe(urlString: String): URLBuilder {
         return this
     }
 
-    encodedPathSegments = if (slashCount == 0) {
-        // Relative path
-        // last item is either file name or empty string for directories
-        encodedPathSegments.dropLast(1)
-    } else {
-        emptyList()
-    }
-
-    val pathEnd = urlString.indexOfAny("?#".toCharArray(), startIndex).takeIf { it > 0 } ?: endIndex
+    val pathEnd = urlString.indexOfAny("?#".toCharArray(), startIndex).takeIf { it >= 0 } ?: endIndex
     if (pathEnd > startIndex) {
-        val rawPath = urlString.substring(startIndex, pathEnd)
+        encodedPathSegments = if (slashCount == 0) {
+            // Relative path
+            // last item is either file name or empty string for directories
+            encodedPathSegments.dropLast(1)
+        } else {
+            emptyList()
+        }
+
+        val encodedPath = urlString.substring(startIndex, pathEnd).encodeURLPath(encodeEncoded = false)
         val basePath = when {
             encodedPathSegments.size == 1 && encodedPathSegments.first().isEmpty() -> emptyList()
             else -> encodedPathSegments
         }
 
-        val rawChunks = if (rawPath == "/") ROOT_PATH else rawPath.split('/')
+        val encodedChunks = if (encodedPath == "/") ROOT_PATH else encodedPath.split('/')
 
         val relativePath = when (slashCount) {
             1 -> ROOT_PATH
             else -> emptyList()
-        } + rawChunks
+        } + encodedChunks
 
         encodedPathSegments = basePath + relativePath
         startIndex = pathEnd
+    } else if (slashCount == 0 && encodedPathSegments.isEmpty() && urlString[startIndex] == '?') {
+        // Query-only references without a base path target the root resource.
+        encodedPathSegments = ROOT_PATH
+    } else if (slashCount > 0) {
+        encodedPathSegments = emptyList()
     }
 
     // Query
@@ -123,23 +150,37 @@ internal fun URLBuilder.takeFromUnsafe(urlString: String): URLBuilder {
 }
 
 private fun URLBuilder.parseFile(urlString: String, startIndex: Int, endIndex: Int, slashCount: Int) {
-    when (slashCount) {
-        2 -> {
-            val nextSlash = urlString.indexOf('/', startIndex)
-            if (nextSlash == -1 || nextSlash == endIndex) {
-                host = urlString.substring(startIndex, endIndex)
-                return
-            }
-
-            host = urlString.substring(startIndex, nextSlash)
-            encodedPath = urlString.substring(nextSlash, endIndex)
+    val pathStart = when (slashCount) {
+        1 -> {
+            host = ""
+            startIndex
         }
+
+        2 -> {
+            val hostEnd = urlString.indexOfAny("/?#".toCharArray(), startIndex)
+                .takeIf { it in startIndex until endIndex }
+                ?: endIndex
+            host = urlString.substring(startIndex, hostEnd)
+            hostEnd
+        }
+
         3 -> {
             host = ""
-            encodedPath = "/" + urlString.substring(startIndex, endIndex)
+            startIndex
         }
+
         else -> throw IllegalArgumentException("Invalid file url: $urlString")
     }
+
+    val pathEnd = urlString.indexOfAny("?#".toCharArray(), pathStart).takeIf { it >= 0 } ?: endIndex
+    val path = urlString.substring(pathStart, pathEnd).encodeURLPath(encodeEncoded = false)
+    encodedPath = if (slashCount == 3) "/$path" else path
+
+    var nextPartStart = pathEnd
+    if (nextPartStart < endIndex && urlString[nextPartStart] == '?') {
+        nextPartStart = parseQuery(urlString, nextPartStart, endIndex)
+    }
+    parseFragment(urlString, nextPartStart, endIndex)
 }
 
 private fun URLBuilder.parseMailto(urlString: String, startIndex: Int, endIndex: Int) {
@@ -177,12 +218,16 @@ private fun URLBuilder.parseFragment(urlString: String, startIndex: Int, endInde
 private fun URLBuilder.fillHost(urlString: String, startIndex: Int, endIndex: Int) {
     val colonIndex = urlString.indexOfColonInHostPort(startIndex, endIndex).takeIf { it > 0 } ?: endIndex
 
-    host = urlString.substring(startIndex, colonIndex)
+    val hostValue = urlString.substring(startIndex, colonIndex)
+    require(hostValue.none { it.isWhitespace() }) {
+        "Host cannot contain whitespace characters: \"$hostValue\""
+    }
+    host = hostValue
 
-    if (colonIndex + 1 < endIndex) {
-        port = urlString.substring(colonIndex + 1, endIndex).toInt()
+    port = if (colonIndex + 1 < endIndex) {
+        urlString.substring(colonIndex + 1, endIndex).toInt()
     } else {
-        port = DEFAULT_PORT
+        DEFAULT_PORT
     }
 }
 

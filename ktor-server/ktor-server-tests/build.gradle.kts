@@ -1,23 +1,29 @@
+/*
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 description = ""
 
 plugins {
+    id("ktorbuild.project.internal")
     id("kotlinx-serialization")
 }
 
-kotlin.sourceSets {
-    commonMain {
-        dependencies {
-            api(project(":ktor-server"))
-            api(project(":ktor-server:ktor-server-plugins:ktor-server-rate-limit"))
-            api(project(":ktor-server:ktor-server-test-base"))
+kotlin {
+    sourceSets {
+        commonTest.dependencies {
+            implementation(projects.ktorTestBase)
+            implementation(projects.ktorServer)
+            implementation(projects.ktorServerRateLimit)
+            implementation(projects.ktorServerTestHost)
         }
-    }
-    jvmTest {
-        dependencies {
+        jvmTest.dependencies {
             implementation(libs.jansi)
-            api(project(":ktor-server:ktor-server-core", configuration = "testOutput"))
-            api(libs.logback.classic)
-            api(project(":ktor-server:ktor-server-plugins:ktor-server-sse"))
+            implementation(projects.ktorClientEncoding)
+            implementation(projects.ktorServerCompressionZstd)
+            implementation(libs.zstd.jni)
+            implementation(projects.ktorServerSse)
+            implementation(projects.ktorSerializationKotlinxJson)
         }
     }
 }

@@ -27,7 +27,7 @@ internal class SignalPoint : Closeable {
     init {
         val (read, write) = memScoped {
             val pipeDescriptors = allocArray<IntVar>(2)
-            pipe(pipeDescriptors).check()
+            pipe(pipeDescriptors).check(posixFunctionName = "pipe")
 
             repeat(2) { index ->
                 makeNonBlocking(pipeDescriptors[index])
@@ -64,6 +64,7 @@ internal class SignalPoint : Closeable {
                 val result = write(writeDescriptor, array, 1.convert())
                 if (result < 0) return
 
+                @Suppress("REDUNDANT_CALL_OF_CONVERSION_METHOD")
                 remaining += result.toInt()
             }
         }
@@ -75,7 +76,12 @@ internal class SignalPoint : Closeable {
             closed = true
 
             close(writeDescriptor)
-            readFromPipe()
+            try {
+                readFromPipe()
+            } catch (_: Exception) {
+                // Ignore errors during pipe teardown — the descriptor may have been
+                // externally closed and reassigned by the OS.
+            }
             close(readDescriptor)
         }
     }
@@ -90,7 +96,7 @@ internal class SignalPoint : Closeable {
             do {
                 val result = read(readDescriptor, buffer, 1024.convert()).convert<Int>()
                 if (result < 0) {
-                    when (val error = PosixException.forErrno()) {
+                    when (val error = PosixException.forSocketError(posixFunctionName = "read")) {
                         is PosixException.TryAgainException -> {}
                         else -> throw error
                     }
@@ -110,6 +116,7 @@ internal class SignalPoint : Closeable {
     }
 
     private fun makeNonBlocking(descriptor: Int) {
-        fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) or O_NONBLOCK).check()
+        fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) or O_NONBLOCK)
+            .check(posixFunctionName = "fcntl")
     }
 }

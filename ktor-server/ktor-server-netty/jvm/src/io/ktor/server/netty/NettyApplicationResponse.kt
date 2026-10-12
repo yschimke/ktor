@@ -1,5 +1,5 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+* Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
 */
 
 package io.ktor.server.netty
@@ -11,6 +11,7 @@ import io.ktor.server.engine.*
 import io.ktor.utils.io.*
 import io.netty.channel.*
 import io.netty.handler.codec.http.*
+import java.util.concurrent.CancellationException
 import kotlin.coroutines.*
 
 public abstract class NettyApplicationResponse(
@@ -32,6 +33,9 @@ public abstract class NettyApplicationResponse(
 
     internal var responseChannel: ByteReadChannel = ByteReadChannel.Empty
 
+    private val canRespond: Boolean
+        get() = !responseMessageSent && context.channel().isActive
+
     override suspend fun respondOutgoingContent(content: OutgoingContent) {
         try {
             super.respondOutgoingContent(content)
@@ -41,7 +45,7 @@ public abstract class NettyApplicationResponse(
             throw t
         } finally {
             val out = responseChannel as? ByteWriteChannel
-            out?.close()
+            out?.flushAndClose()
         }
     }
 
@@ -50,7 +54,10 @@ public abstract class NettyApplicationResponse(
         // because it should've been set by commitHeaders earlier
         val chunked = headers[HttpHeaders.TransferEncoding] == "chunked"
 
-        if (responseMessageSent) return
+        if (!canRespond) {
+            cancelIfChannelNotActive()
+            return
+        }
 
         val message = responseMessage(chunked, bytes)
         responseChannel = when (message) {
@@ -60,13 +67,35 @@ public abstract class NettyApplicationResponse(
         responseMessage = message
         responseReady.setSuccess()
         responseMessageSent = true
+
+        awaitProcessingResponseIfInfoOrNoContent()
     }
 
     override suspend fun responseChannel(): ByteWriteChannel {
         val channel = ByteChannel()
         val chunked = headers[HttpHeaders.TransferEncoding] == "chunked"
         sendResponse(chunked, content = channel)
+
+        awaitProcessingResponseIfInfoOrNoContent()
+
         return channel
+    }
+
+    /**
+     * Await the [NettyApplicationCall.responseWriteJob] to complete if the response status is informational or 204.
+     * Netty discards certain headers of such responses, so we have to wait for Netty to finish that,
+     * in order to avoid the race condition.
+     */
+    private suspend fun awaitProcessingResponseIfInfoOrNoContent() {
+        val status = status()
+
+        if (status != null) {
+            val infoOrNoContent = status == HttpStatusCode.NoContent || (status.value >= 100 && status.value < 200)
+
+            if (infoOrNoContent && call is NettyApplicationCall) {
+                (call as NettyApplicationCall).responseWriteJob.join()
+            }
+        }
     }
 
     override suspend fun respondNoContent(content: OutgoingContent.NoContent) {
@@ -88,13 +117,17 @@ public abstract class NettyApplicationResponse(
     }
 
     internal fun sendResponse(chunked: Boolean = true, content: ByteReadChannel) {
-        if (responseMessageSent) return
+        if (!canRespond) {
+            cancelIfChannelNotActive()
+            return
+        }
 
         responseChannel = content
         responseMessage = when {
             content.isClosedForRead -> {
                 responseMessage(chunked = false, data = EmptyByteArray)
             }
+
             else -> {
                 responseMessage(chunked, last = false)
             }
@@ -107,10 +140,24 @@ public abstract class NettyApplicationResponse(
         sendResponse(content = ByteReadChannel.Empty)
     }
 
+    /**
+     * Marks the call as answered when the response was completed at the channel level without going
+     * through [respondOutgoingContent] — either because an internal response was sent directly
+     * (for example, the built-in 400 for a malformed request or the built-in 408 for a read timeout),
+     * or because the response was given up on entirely (see [cancel]).
+     * If not called, the response will not be marked as sent, and a later failure could try to respond again and hit
+     * the "already completed" guard in [io.ktor.server.netty.http1.NettyHttp1ApplicationResponse].
+     */
+    internal fun markAsSent() {
+        responseMessageSent = true
+        @OptIn(InternalAPI::class)
+        isSent = true
+    }
+
     internal fun close() {
         val existingChannel = responseChannel
         if (existingChannel is ByteWriteChannel) {
-            existingChannel.close(ClosedWriteChannelException("Application response has been closed"))
+            existingChannel.close(cause = null)
             responseChannel = ByteReadChannel.Empty
         }
 
@@ -119,11 +166,17 @@ public abstract class NettyApplicationResponse(
         // while close only does flush() and doesn't terminate connection
     }
 
+    private fun cancelIfChannelNotActive() {
+        if (!context.channel().isActive) {
+            cancel()
+        }
+    }
+
     public fun cancel() {
         if (!responseMessageSent) {
             responseChannel = ByteReadChannel.Empty
-            responseReady.setFailure(java.util.concurrent.CancellationException("Response was cancelled"))
-            responseMessageSent = true
+            responseReady.tryFailure(CancellationException("Response was cancelled"))
+            markAsSent()
         }
     }
 

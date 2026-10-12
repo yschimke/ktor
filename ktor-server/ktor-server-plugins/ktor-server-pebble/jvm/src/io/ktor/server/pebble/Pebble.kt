@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.pebble
@@ -10,12 +10,14 @@ import io.ktor.server.application.*
 import io.ktor.server.application.hooks.*
 import io.ktor.server.request.*
 import io.ktor.utils.io.*
-import io.pebbletemplates.pebble.*
-import java.io.*
+import io.pebbletemplates.pebble.PebbleEngine
+import java.io.StringWriter
 import java.util.*
 
 /**
  * Configuration for the [Pebble] plugin.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.pebble.PebbleConfiguration)
  */
 @KtorDsl
 public class PebbleConfiguration : PebbleEngine.Builder() {
@@ -23,12 +25,16 @@ public class PebbleConfiguration : PebbleEngine.Builder() {
     /**
      * Allows you to define currently available language translations
      * must follow IETF BCP 47 language tag string specification
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.pebble.PebbleConfiguration.availableLanguages)
      */
     public var availableLanguages: List<String>? = null
 }
 
 /**
  * A response content handled by the [Pebble] plugin.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.pebble.PebbleContent)
  *
  * @param template name of the template to be resolved by Pebble
  * @param model which is passed into the template
@@ -48,6 +54,8 @@ public class PebbleContent(
  * A plugin that allows you to use Pebble templates as views within your application.
  * Provides the ability to respond with [PebbleContent].
  * You can learn more from [Pebble](https://ktor.io/docs/pebble.html).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.pebble.Pebble)
  */
 public val Pebble: ApplicationPlugin<PebbleConfiguration> = createApplicationPlugin("Pebble", ::PebbleConfiguration) {
     val engine = pluginConfig.build()

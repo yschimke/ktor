@@ -1,19 +1,21 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
+
 package io.ktor.serialization.kotlinx.test
 
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.serialization.*
 import io.ktor.serialization.kotlinx.*
+import io.ktor.test.*
 import io.ktor.test.dispatcher.*
 import io.ktor.util.reflect.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.charsets.*
-import io.ktor.utils.io.core.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.io.*
 import kotlinx.serialization.*
 import kotlin.test.*
 
@@ -41,7 +43,7 @@ public abstract class AbstractSerializationTest<T : SerialFormat> {
 
     @Test
     public fun testMapsElements() {
-        testSuspend {
+        runTest {
             val testSerializer = KotlinxSerializationConverter(defaultSerializationFormat)
             testSerializer.testSerialize(
                 mapOf(
@@ -84,7 +86,7 @@ public abstract class AbstractSerializationTest<T : SerialFormat> {
 
     @Test
     public fun testRegisterCustom() {
-        testSuspend {
+        runTest {
             val serializer = KotlinxSerializationConverter(defaultSerializationFormat)
 
             val user = User(1, "vasya")
@@ -95,7 +97,7 @@ public abstract class AbstractSerializationTest<T : SerialFormat> {
 
     @Test
     public fun testRegisterCustomList() {
-        testSuspend {
+        runTest {
             val serializer = KotlinxSerializationConverter(defaultSerializationFormat)
 
             val user = User(2, "petya")
@@ -116,7 +118,7 @@ public abstract class AbstractSerializationTest<T : SerialFormat> {
 
     @Test
     public open fun testRegisterCustomFlow() {
-        testSuspend {
+        runTest {
             val serializer = KotlinxSerializationConverter(defaultSerializationFormat)
 
             val user = User(2, "petya")
@@ -142,13 +144,14 @@ public abstract class AbstractSerializationTest<T : SerialFormat> {
                 serialize(defaultContentType, Charsets.UTF_8, typeInfo<T>(), data)
         ) {
             is OutgoingContent.ByteArrayContent -> content.bytes()
+
             is ChannelWriterContent -> {
                 val channel = ByteChannel()
                 GlobalScope.launch {
                     content.writeTo(channel)
                     channel.close()
                 }
-                channel.readRemaining().readBytes()
+                channel.readBuffer().readByteArray()
             }
 
             else -> error("Failed to get serialized $data")

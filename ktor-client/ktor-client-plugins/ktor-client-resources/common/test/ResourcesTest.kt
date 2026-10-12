@@ -1,16 +1,19 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 import io.ktor.client.engine.mock.*
+import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.plugins.resources.*
 import io.ktor.client.plugins.resources.Resources
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import io.ktor.client.tests.utils.*
+import io.ktor.client.test.base.*
 import io.ktor.http.*
 import io.ktor.resources.*
-import kotlin.test.*
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertSame
 
 class ResourcesTest {
 
@@ -146,6 +149,36 @@ class ResourcesTest {
         test { client ->
             val response = client.get(ParametersEncoded("p.:+!ath/", "qu?e/ry", listOf("it=em1", "it&em2")))
             assertEquals(HttpStatusCode.OK, response.status)
+        }
+    }
+
+    @Resource("path/{id}")
+    class PathWithOptionalQueryParameter(val id: Int, val query: String? = null)
+
+    @Test
+    fun `check template is added as attribute`() = testWithEngine(MockEngine) {
+        config {
+            install(Resources)
+            engine {
+                addHandler { request ->
+                    respondOk()
+                }
+            }
+        }
+        test { client ->
+            val resource = PathWithOptionalQueryParameter(10, "clyde")
+            val clientWithAssertions = client.config {
+                install(
+                    createClientPlugin("check resource attribute is set") {
+                        onRequest { call, _ ->
+                            assertSame(resource, call.attributes[RESOURCE])
+                        }
+                    }
+                )
+            }
+
+            val response = clientWithAssertions.get(resource)
+            assertEquals(response.status, HttpStatusCode.OK)
         }
     }
 }

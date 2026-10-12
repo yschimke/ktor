@@ -1,0 +1,54 @@
+/*
+* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+*/
+
+package io.ktor.server.cio
+
+import io.ktor.network.sockets.*
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
+
+/**
+ * Represents a server instance
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.cio.HttpServer)
+ *
+ * @property rootServerJob server job - root for all jobs
+ * @property acceptJob client connections accepting job
+ * @property serverSocket a deferred server socket instance, could be completed with error if it failed to bind
+ */
+public class HttpServer(
+    public val rootServerJob: Job,
+    public val acceptJob: Job,
+    public val serverSocket: Deferred<ServerSocket>
+)
+
+/**
+ * HTTP server connector settings
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.cio.HttpServerSettings)
+ *
+ * @property host to listen to
+ * @property port to listen to
+ * @property connectionIdleTimeoutSeconds time to live for IDLE connections
+ * @property reuseAddress allow the server to bind to an address that is already in use
+ */
+public data class HttpServerSettings(
+    val host: String = "0.0.0.0",
+    val port: Int = 8080,
+    val connectionIdleTimeoutSeconds: Long = 45,
+    val reuseAddress: Boolean = false
+)
+
+/**
+ * Represents the settings for a Unix-based HTTP server.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.cio.UnixSocketServerSettings)
+ *
+ * @property connectionIdleTimeoutSeconds time to live for IDLE connections
+ * @property socketPath the path to the Unix domain socket file used for the server communication.
+ */
+public class UnixSocketServerSettings(
+    public val socketPath: String,
+    public val connectionIdleTimeoutSeconds: Long = 45,
+)

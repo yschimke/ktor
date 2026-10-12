@@ -1,27 +1,30 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.client.plugins.cache
 
 import io.ktor.client.call.*
+import io.ktor.client.plugins.cache.storage.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import io.ktor.http.content.*
 import io.ktor.util.date.*
+import io.ktor.util.logging.*
 import io.ktor.utils.io.*
-import io.ktor.utils.io.core.*
-import kotlin.collections.*
+import kotlinx.io.readByteArray
 
 @OptIn(InternalAPI::class)
 internal suspend fun HttpCacheEntry(isShared: Boolean, response: HttpResponse): HttpCacheEntry {
-    val body = response.content.readRemaining().readBytes()
-    response.complete()
+    val body = response.rawContent.readBuffer().readByteArray()
     return HttpCacheEntry(response.cacheExpires(isShared), response.varyKeys(), response, body)
 }
 
 /**
  * Client single response cache with [expires] and [varyKeys].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.cache.HttpCacheEntry)
  */
 public class HttpCacheEntry internal constructor(
     public val expires: GMTDate,
@@ -29,14 +32,22 @@ public class HttpCacheEntry internal constructor(
     public val response: HttpResponse,
     public val body: ByteArray
 ) {
-    internal val responseHeaders: Headers = Headers.build {
-        appendAll(response.headers)
-    }
+    internal val responseHeaders: Headers = response.headers.filterForCacheStorage()
 
     internal fun produceResponse(): HttpResponse {
-        val currentClient = response.call.client
-        val call = SavedHttpCall(currentClient, response.call.request, response, body)
-        return call.response
+        val filteredResponse = object : HttpResponse() {
+            override val call: HttpClientCall get() = response.call
+            override val status: HttpStatusCode get() = response.status
+            override val version: HttpProtocolVersion get() = response.version
+            override val requestTime: GMTDate get() = response.requestTime
+            override val responseTime: GMTDate get() = response.responseTime
+            override val headers: Headers get() = responseHeaders
+            override val coroutineContext get() = response.coroutineContext
+
+            @OptIn(InternalAPI::class)
+            override val rawContent: ByteReadChannel get() = response.rawContent
+        }
+        return SavedHttpCall(response.call.client, response.call.request, filteredResponse, body).response
     }
 
     override fun equals(other: Any?): Boolean {
@@ -50,6 +61,9 @@ public class HttpCacheEntry internal constructor(
     }
 }
 
+// RFC 7230 §3.2.2: multiple values for the same header field are equivalent to a comma-separated list.
+internal fun List<String>?.joinHeaderValues(): String = this?.joinToString(",") ?: ""
+
 internal fun HttpResponse.varyKeys(): Map<String, String> {
     val validationKeys = vary() ?: return emptyMap()
 
@@ -57,7 +71,7 @@ internal fun HttpResponse.varyKeys(): Map<String, String> {
     val requestHeaders = call.request.headers
 
     for (key in validationKeys) {
-        result[key] = requestHeaders[key] ?: ""
+        result[key.lowercase()] = requestHeaders.getAll(key).joinHeaderValues()
     }
 
     return result
@@ -70,7 +84,7 @@ internal fun HttpResponse.cacheExpires(isShared: Boolean, fallback: () -> GMTDat
 
     val maxAge = cacheControl.firstOrNull { it.value.startsWith(maxAgeKey) }
         ?.value?.split("=")
-        ?.get(1)?.toLongOrNull()
+        ?.getOrNull(1)?.toLongOrNull()
 
     if (maxAge != null) {
         return requestTime + maxAge * 1000L
@@ -83,7 +97,7 @@ internal fun HttpResponse.cacheExpires(isShared: Boolean, fallback: () -> GMTDat
 
         return try {
             it.fromHttpToGmtDate()
-        } catch (e: Throwable) {
+        } catch (_: Throwable) {
             fallback()
         }
     } ?: fallback()
@@ -99,7 +113,7 @@ internal fun shouldValidate(
     val requestCacheControl = parseHeaderValue(requestHeaders.getAll(HttpHeaders.CacheControl)?.joinToString(","))
 
     if (CacheControl.NO_CACHE in requestCacheControl) {
-        LOGGER.trace("\"no-cache\" is set for ${request.url}, should validate cached response")
+        LOGGER.trace { "\"no-cache\" is set for ${request.url}, should validate cached response" }
         return ValidateStatus.ShouldValidate
     }
 
@@ -107,21 +121,21 @@ internal fun shouldValidate(
         ?.value?.split("=")
         ?.get(1)?.let { it.toIntOrNull() ?: 0 }
     if (requestMaxAge == 0) {
-        LOGGER.trace("\"max-age\" is not set for ${request.url}, should validate cached response")
+        LOGGER.trace { "\"max-age\" is not set for ${request.url}, should validate cached response" }
         return ValidateStatus.ShouldValidate
     }
 
     if (CacheControl.NO_CACHE in responseCacheControl) {
-        LOGGER.trace("\"no-cache\" is set for ${request.url}, should validate cached response")
+        LOGGER.trace { "\"no-cache\" is set for ${request.url}, should validate cached response" }
         return ValidateStatus.ShouldValidate
     }
     val validMillis = cacheExpires.timestamp - getTimeMillis()
     if (validMillis > 0) {
-        LOGGER.trace("Cached response is valid for ${request.url}, should not validate")
+        LOGGER.trace { "Cached response is valid for ${request.url}, should not validate" }
         return ValidateStatus.ShouldNotValidate
     }
     if (CacheControl.MUST_REVALIDATE in responseCacheControl) {
-        LOGGER.trace("\"must-revalidate\" is set for ${request.url}, should validate cached response")
+        LOGGER.trace { "\"must-revalidate\" is set for ${request.url}, should validate cached response" }
         return ValidateStatus.ShouldValidate
     }
 
@@ -130,13 +144,42 @@ internal fun shouldValidate(
         ?.toIntOrNull() ?: 0
     val maxStaleMillis = maxStale * 1000L
     if (validMillis + maxStaleMillis > 0) {
-        LOGGER.trace("Cached response is stale for ${request.url} but less than max-stale, should warn")
+        LOGGER.trace { "Cached response is stale for ${request.url} but less than max-stale, should warn" }
         return ValidateStatus.ShouldWarn
     }
-    LOGGER.trace("Cached response is stale for ${request.url}, should validate cached response")
+    LOGGER.trace { "Cached response is stale for ${request.url}, should validate cached response" }
     return ValidateStatus.ShouldValidate
 }
 
 internal enum class ValidateStatus {
-    ShouldValidate, ShouldNotValidate, ShouldWarn
+    ShouldValidate,
+    ShouldNotValidate,
+    ShouldWarn,
+}
+
+internal fun etagMatches(cachedEtag: String, validationEtag: String): Boolean =
+    runCatching {
+        val cached = EntityTagVersion.parseSingle(cachedEtag)
+        val validation = EntityTagVersion.parseSingle(validationEtag)
+        return cached.noneMatch(listOf(validation)) == VersionCheckResult.NOT_MODIFIED
+    }.getOrDefault(false)
+
+internal fun HttpCacheEntry.withFreshenedMetadata(
+    expires: GMTDate,
+    varyKeys: Map<String, String>,
+    mergedHeaders: Headers,
+): HttpCacheEntry {
+    val freshenedResponse = object : HttpResponse() {
+        override val call: HttpClientCall get() = response.call
+        override val status: HttpStatusCode get() = response.status
+        override val version: HttpProtocolVersion get() = response.version
+        override val requestTime: GMTDate get() = response.requestTime
+        override val responseTime: GMTDate get() = response.responseTime
+        override val headers: Headers = mergedHeaders
+        override val coroutineContext get() = response.coroutineContext
+
+        @OptIn(InternalAPI::class)
+        override val rawContent: ByteReadChannel get() = response.rawContent
+    }
+    return HttpCacheEntry(expires, varyKeys, freshenedResponse, body)
 }

@@ -5,11 +5,12 @@
 package io.ktor.server.engine
 
 import io.ktor.server.application.*
-import io.ktor.server.config.*
 import io.ktor.util.*
-import java.io.*
-import java.net.*
-import java.security.*
+import java.io.File
+import java.io.FileInputStream
+import java.net.URI
+import java.net.URLClassLoader
+import java.security.KeyStore
 
 internal actual fun ApplicationEngine.Configuration.configureSSLConnectors(
     host: String,
@@ -17,7 +18,10 @@ internal actual fun ApplicationEngine.Configuration.configureSSLConnectors(
     sslKeyStorePath: String?,
     sslKeyStorePassword: String?,
     sslPrivateKeyPassword: String?,
-    sslKeyAlias: String
+    sslKeyAlias: String,
+    sslTrustStorePath: String?,
+    sslTrustStorePassword: String?,
+    sslEnabledProtocols: List<String>?
 ) {
     if (sslKeyStorePath == null) {
         throw IllegalArgumentException(
@@ -35,18 +39,15 @@ internal actual fun ApplicationEngine.Configuration.configureSSLConnectors(
         )
     }
 
-    val keyStoreFile = File(sslKeyStorePath).let { file ->
-        if (file.exists() || file.isAbsolute) file else File(".", sslKeyStorePath).absoluteFile
-    }
-    val keyStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
-        FileInputStream(keyStoreFile).use {
-            load(it, sslKeyStorePassword.toCharArray())
-        }
-
+    val keyStoreFile = resolvePath(sslKeyStorePath)
+    val keyStore = getStore(keyStoreFile, sslKeyStorePassword) {
         requireNotNull(getKey(sslKeyAlias, sslPrivateKeyPassword.toCharArray())) {
             "The specified key $sslKeyAlias doesn't exist in the key store $sslKeyStorePath"
         }
     }
+
+    val trustStoreFile = sslTrustStorePath?.let { resolvePath(it) }
+    val trustStore: KeyStore? = trustStoreFile?.let { getStore(it, sslTrustStorePassword) }
 
     sslConnector(
         keyStore,
@@ -57,6 +58,13 @@ internal actual fun ApplicationEngine.Configuration.configureSSLConnectors(
         this.host = host
         this.port = sslPort.toInt()
         this.keyStorePath = keyStoreFile
+
+        if (trustStoreFile != null) {
+            this.trustStore = trustStore
+            this.trustStorePath = trustStoreFile
+        }
+
+        this.enabledProtocols = sslEnabledProtocols
     }
 }
 
@@ -73,7 +81,37 @@ internal actual fun ApplicationEnvironmentBuilder.configurePlatformProperties(ar
         ?: ApplicationEnvironment::class.java.classLoader
 }
 
-internal actual fun getConfigFromEnvironment(): ApplicationConfig = System.getProperties()
-    .toMap()
-    .filterKeys { (it as String).startsWith("ktor.") }
-    .let { env -> MapApplicationConfig(env.map { it.key as String to it.value as String }) }
+internal actual fun getKtorEnvironmentProperties(): List<Pair<String, String>> = buildList {
+    System.getProperties().forEach {
+        val key = it.key as? String ?: return@forEach
+        if (key.startsWith("ktor.")) {
+            val value = it.value as? String ?: return@forEach
+            add(key to value)
+        }
+    }
+}
+
+internal actual fun getEnvironmentProperty(key: String): String? {
+    return System.getProperty(key)
+}
+
+internal actual fun setEnvironmentProperty(key: String, value: String) {
+    System.setProperty(key, value)
+}
+
+internal actual fun clearEnvironmentProperty(key: String) {
+    System.clearProperty(key)
+}
+
+private fun resolvePath(path: String) = File(path).let { file ->
+    if (file.exists() || file.isAbsolute) file else File(".", path).absoluteFile
+}
+
+private fun getStore(keyStoreFile: File, keyStorePassword: String?, config: KeyStore.() -> Unit = {}) =
+    KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+        FileInputStream(keyStoreFile).use {
+            load(it, keyStorePassword?.toCharArray())
+        }
+
+        config()
+    }

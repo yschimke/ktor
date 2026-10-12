@@ -1,11 +1,10 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.http
 
 import io.ktor.util.date.*
-import kotlin.native.concurrent.*
 
 private val HTTP_DATE_FORMATS = listOf(
     "***, dd MMM YYYY hh:mm:ss zzz",
@@ -25,6 +24,8 @@ private val HTTP_DATE_FORMATS = listOf(
  * Convert valid http date [String] to [GMTDate] trying various http date formats from [HTTP_DATE_FORMATS]
  *
  * Note that only GMT(UTC) date is valid http date.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.fromHttpToGmtDate)
  */
 public fun String.fromHttpToGmtDate(): GMTDate = with(trim()) {
     for (format in HTTP_DATE_FORMATS) {
@@ -38,12 +39,22 @@ public fun String.fromHttpToGmtDate(): GMTDate = with(trim()) {
     error("Failed to parse date: $this")
 }
 
+/** Conventional `Expires` value meaning "already expired"; not a date under RFC 6265. */
+private const val ZERO_EXPIRES = "0"
+
 /**
  * Convert valid cookie date [String] to [GMTDate] trying first the RFC6265 standard, falling back on [fromHttpToGmtDate]
+ *
+ * The value `0` is read as [GMTDate.START], following the widespread server convention of sending
+ * `Expires=0` to delete a cookie. RFC 6265 does not define it as a date.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.fromCookieToGmtDate)
  *
  * @see [fromHttpToGmtDate]
  */
 public fun String.fromCookieToGmtDate(): GMTDate = with(trim()) {
+    if (this@with == ZERO_EXPIRES) return GMTDate.START
+
     try {
         val parser = CookieDateParser()
         return parser.parse(this@with)
@@ -55,6 +66,8 @@ public fun String.fromCookieToGmtDate(): GMTDate = with(trim()) {
 
 /**
  * Convert [GMTDate] to valid http date [String]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.toHttpDate)
  */
 public fun GMTDate.toHttpDate(): String = buildString {
     append("${dayOfWeek.value}, ")

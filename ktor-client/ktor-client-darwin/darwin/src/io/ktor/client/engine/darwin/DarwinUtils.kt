@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.engine.darwin
@@ -8,11 +8,14 @@ import io.ktor.client.call.*
 import io.ktor.client.engine.*
 import io.ktor.http.content.*
 import io.ktor.utils.io.*
-import io.ktor.utils.io.errors.*
 import kotlinx.cinterop.*
 import kotlinx.coroutines.*
+import kotlinx.io.IOException
 import platform.Foundation.*
-import platform.posix.*
+import platform.posix.memcpy
+
+@OptIn(UnsafeNumber::class)
+internal val NSURLSessionTask.id: ULong get() = this.taskIdentifier.toULong()
 
 @OptIn(
     DelicateCoroutinesApi::class,
@@ -100,6 +103,20 @@ internal fun NSData.toByteArray(): ByteArray {
 }
 
 /**
+ * Writes the entire content of [NSData] to this channel without intermediate allocations.
+ * Writes directly from NSData's byte pointer to avoid creating an intermediate ByteArray.
+ */
+@OptIn(UnsafeNumber::class, ExperimentalForeignApi::class)
+internal suspend fun ByteWriteChannel.writeFully(data: NSData) {
+    val length = data.length.toLong()
+    if (length == 0L) return
+
+    val bytes = data.bytes ?: return
+    @Suppress("UNCHECKED_CAST")
+    writeFully(bytes as CPointer<ByteVar>, 0, length)
+}
+
+/**
  * Executes the given block function on this resource and then releases it correctly whether an
  * exception is thrown or not.
  */
@@ -112,5 +129,4 @@ internal inline fun <T : CPointed, R> CPointer<T>.use(block: (CPointer<T>) -> R)
     }
 }
 
-@Suppress("KDocMissingDocumentation")
 public class DarwinHttpRequestException(public val origin: NSError) : IOException("Exception in http request: $origin")

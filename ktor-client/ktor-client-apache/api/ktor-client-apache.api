@@ -1,6 +1,9 @@
 public final class io/ktor/client/engine/apache/Apache : io/ktor/client/engine/HttpClientEngineFactory {
 	public static final field INSTANCE Lio/ktor/client/engine/apache/Apache;
 	public fun create (Lkotlin/jvm/functions/Function1;)Lio/ktor/client/engine/HttpClientEngine;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/ktor/client/engine/apache/ApacheEngineConfig : io/ktor/client/engine/HttpClientEngineConfig {
@@ -24,6 +27,7 @@ public final class io/ktor/client/engine/apache/ApacheEngineConfig : io/ktor/cli
 public final class io/ktor/client/engine/apache/ApacheEngineContainer : io/ktor/client/HttpClientEngineContainer {
 	public fun <init> ()V
 	public fun getFactory ()Lio/ktor/client/engine/HttpClientEngineFactory;
+	public fun getPriority ()D
 	public fun toString ()Ljava/lang/String;
 }
 

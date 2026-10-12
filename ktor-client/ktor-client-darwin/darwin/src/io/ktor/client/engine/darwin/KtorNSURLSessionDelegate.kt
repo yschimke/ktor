@@ -1,23 +1,29 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.engine.darwin
 
 import io.ktor.client.engine.darwin.internal.*
+import io.ktor.client.plugins.websocket.*
 import io.ktor.client.request.*
 import io.ktor.util.collections.*
-import kotlinx.cinterop.*
-import kotlinx.coroutines.*
+import io.ktor.utils.io.*
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.UnsafeNumber
+import kotlinx.cinterop.convert
+import kotlinx.coroutines.CompletableDeferred
 import platform.Foundation.*
-import platform.darwin.*
-import kotlin.coroutines.*
+import platform.darwin.NSObject
+import kotlin.coroutines.CoroutineContext
 
 private const val HTTP_REQUESTS_INITIAL_CAPACITY = 32
 private const val WS_REQUESTS_INITIAL_CAPACITY = 16
 
 /**
  * Creates an instance of [KtorNSURLSessionDelegate]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.KtorNSURLSessionDelegate)
  */
 @OptIn(UnsafeNumber::class)
 public fun KtorNSURLSessionDelegate(): KtorNSURLSessionDelegate {
@@ -40,20 +46,22 @@ public fun KtorNSURLSessionDelegate(): KtorNSURLSessionDelegate {
  * For WebSockets to work, it's important that users call these functions:
  *   * URLSession:webSocketTask:didOpenWithProtocol:
  *   * URLSession:webSocketTask:didCloseWithCode:reason:
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.KtorNSURLSessionDelegate)
  */
 @OptIn(UnsafeNumber::class)
 public class KtorNSURLSessionDelegate(
     internal val challengeHandler: ChallengeHandler?
 ) : NSObject(), NSURLSessionDataDelegateProtocol, NSURLSessionWebSocketDelegateProtocol {
 
-    private val taskHandlers: ConcurrentMap<NSURLSessionTask, DarwinTaskHandler> =
+    private val taskHandlers: ConcurrentMap<ULong, DarwinTaskHandler> =
         ConcurrentMap(HTTP_REQUESTS_INITIAL_CAPACITY)
 
-    private val webSocketSessions: ConcurrentMap<NSURLSessionWebSocketTask, DarwinWebsocketSession> =
+    private val webSocketSessions: ConcurrentMap<ULong, DarwinWebsocketSession> =
         ConcurrentMap(WS_REQUESTS_INITIAL_CAPACITY)
 
     override fun URLSession(session: NSURLSession, dataTask: NSURLSessionDataTask, didReceiveData: NSData) {
-        val taskHandler = taskHandlers[dataTask] ?: return
+        val taskHandler = taskHandlers[dataTask.id] ?: return
         taskHandler.receiveData(dataTask, didReceiveData)
     }
 
@@ -61,13 +69,14 @@ public class KtorNSURLSessionDelegate(
     }
 
     override fun URLSession(session: NSURLSession, task: NSURLSessionTask, didCompleteWithError: NSError?) {
-        taskHandlers[task]?.let {
+        taskHandlers[task.id]?.let {
             it.complete(task, didCompleteWithError)
-            taskHandlers.remove(task)
+            taskHandlers.remove(task.id)
         }
 
-        webSocketSessions[task]?.let {
+        webSocketSessions[task.id]?.let {
             it.didComplete(didCompleteWithError)
+            webSocketSessions.remove(task.id)
         }
     }
 
@@ -76,8 +85,8 @@ public class KtorNSURLSessionDelegate(
         webSocketTask: NSURLSessionWebSocketTask,
         didOpenWithProtocol: String?
     ) {
-        val wsSession = webSocketSessions[webSocketTask] ?: return
-        wsSession.didOpen()
+        val wsSession = webSocketSessions[webSocketTask.id] ?: return
+        wsSession.didOpen(didOpenWithProtocol)
     }
 
     override fun URLSession(
@@ -86,16 +95,29 @@ public class KtorNSURLSessionDelegate(
         didCloseWithCode: NSURLSessionWebSocketCloseCode,
         reason: NSData?
     ) {
-        val wsSession = webSocketSessions[webSocketTask] ?: return
+        val wsSession = webSocketSessions[webSocketTask.id] ?: return
         wsSession.didClose(didCloseWithCode, reason, webSocketTask)
+        webSocketSessions.remove(webSocketTask.id)
     }
 
     internal fun read(
+        request: HttpRequestData,
         task: NSURLSessionWebSocketTask,
         callContext: CoroutineContext
     ): CompletableDeferred<HttpResponseData> {
-        val taskHandler = DarwinWebsocketSession(callContext, task)
-        webSocketSessions[task] = taskHandler
+        @OptIn(InternalAPI::class)
+        val wsConfig = request.attributes[WEBSOCKETS_KEY]
+        val taskHandler = DarwinWebsocketSession(
+            callContext,
+            task,
+            wsConfig.channelsConfig
+        )
+        webSocketSessions[task.id] = taskHandler
+        // Fields MUST be assigned to the task BEFORE starting it.
+        // The "maximum message size" actually refers to the underlying buffer,
+        // so it will allow >= maxFrameSize, depending on how quickly our bytes are read to the buffer.
+        @OptIn(ExperimentalForeignApi::class)
+        task.setMaximumMessageSize(wsConfig.maxFrameSize.convert())
         return taskHandler.response
     }
 
@@ -105,12 +127,14 @@ public class KtorNSURLSessionDelegate(
         task: NSURLSessionTask
     ): CompletableDeferred<HttpResponseData> {
         val taskHandler = DarwinTaskHandler(request, callContext)
-        taskHandlers.put(task, taskHandler)
+        taskHandlers[task.id] = taskHandler
         return taskHandler.response
     }
 
     /**
      * Disable embedded redirects.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.KtorNSURLSessionDelegate.URLSession)
      */
     override fun URLSession(
         session: NSURLSession,
@@ -124,6 +148,8 @@ public class KtorNSURLSessionDelegate(
 
     /**
      * Handle challenge.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.KtorNSURLSessionDelegate.URLSession)
      */
     override fun URLSession(
         session: NSURLSession,
@@ -131,11 +157,16 @@ public class KtorNSURLSessionDelegate(
         didReceiveChallenge: NSURLAuthenticationChallenge,
         completionHandler: (NSURLSessionAuthChallengeDisposition, NSURLCredential?) -> Unit
     ) {
-        val handler = challengeHandler
-        if (handler != null) {
-            handler(session, task, didReceiveChallenge, completionHandler)
-        } else {
+        val handler = challengeHandler ?: run {
             completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, didReceiveChallenge.proposedCredential)
+            return
+        }
+
+        try {
+            handler(session, task, didReceiveChallenge, completionHandler)
+        } catch (cause: Throwable) {
+            taskHandlers[task.id]?.saveFailure(cause)
+            completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, null)
         }
     }
 }

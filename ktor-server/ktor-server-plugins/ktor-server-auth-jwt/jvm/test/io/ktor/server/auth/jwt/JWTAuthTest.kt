@@ -7,405 +7,385 @@ package io.ktor.server.auth.jwt
 import com.auth0.jwk.*
 import com.auth0.jwt.*
 import com.auth0.jwt.algorithms.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.http.auth.*
-import io.ktor.server.application.*
 import io.ktor.server.auth.*
-import io.ktor.server.auth.Principal
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.testing.*
 import io.mockk.*
+import java.io.*
 import java.security.*
 import java.security.interfaces.*
 import java.util.concurrent.*
 import kotlin.test.*
 
-@Suppress("DEPRECATION")
 class JWTAuthTest {
 
     @Test
-    fun testJwtNoAuth() {
-        withApplication {
-            application.configureServerJwt()
+    fun testJwtNoAuth() = testApplication {
+        configureServerJwt()
 
-            val response = handleRequest {
-                uri = "/"
-            }
+        val response = client.request("/")
 
-            verifyResponseUnauthorized(response)
-        }
+        verifyResponseUnauthorized(response)
     }
 
     @Test
-    fun testJwtNoAuthCustomChallengeNoToken() {
-        withApplication {
-            application.configureServerJwt {
-                challenge { _, _ ->
-                    call.respond(UnauthorizedResponse(HttpAuthHeader.basicAuthChallenge("custom1", Charsets.UTF_8)))
-                }
+    fun testJwtNoAuthCustomChallengeNoToken() = testApplication {
+        configureServerJwt {
+            challenge { _, _ ->
+                call.respond(UnauthorizedResponse(HttpAuthHeader.basicAuthChallenge("custom1", Charsets.UTF_8)))
             }
-
-            val response = handleRequest {
-                uri = "/"
-            }
-
-            verifyResponseUnauthorized(response)
-            assertEquals("Basic realm=custom1, charset=UTF-8", response.response.headers[HttpHeaders.WWWAuthenticate])
         }
+
+        val response = client.request("/")
+
+        verifyResponseUnauthorized(response)
+        assertEquals("Basic realm=custom1, charset=UTF-8", response.headers[HttpHeaders.WWWAuthenticate])
     }
 
     @Test
-    fun testJwtMultipleNoAuthCustomChallengeNoToken() {
-        withApplication {
-            application.configureServerJwt {
-                challenge { _, _ ->
-                    call.respond(UnauthorizedResponse(HttpAuthHeader.basicAuthChallenge("custom1", Charsets.UTF_8)))
-                }
+    fun testJwtMultipleNoAuthCustomChallengeNoToken() = testApplication {
+        configureServerJwt {
+            challenge { _, _ ->
+                call.respond(UnauthorizedResponse(HttpAuthHeader.basicAuthChallenge("custom1", Charsets.UTF_8)))
             }
-
-            val response = handleRequest {
-                uri = "/"
-            }
-
-            verifyResponseUnauthorized(response)
-            assertEquals("Basic realm=custom1, charset=UTF-8", response.response.headers[HttpHeaders.WWWAuthenticate])
         }
+
+        val response = client.request("/")
+
+        verifyResponseUnauthorized(response)
+        assertEquals("Basic realm=custom1, charset=UTF-8", response.headers[HttpHeaders.WWWAuthenticate])
     }
 
     @Test
-    fun testJwtWithMultipleConfigurations() {
+    fun testJwtWithMultipleConfigurations() = testApplication {
         val validated = mutableSetOf<String>()
-        var currentPrincipal: (JWTCredential) -> Principal? = { null }
+        var currentPrincipal: (JWTCredential) -> Any? = { null }
 
-        withApplication {
-            application.install(Authentication) {
-                jwt(name = "first") {
-                    realm = "realm1"
-                    verifier(issuer, audience, algorithm)
-                    validate { validated.add("1"); currentPrincipal(it) }
-                    challenge { _, _ ->
-                        call.respond(UnauthorizedResponse(HttpAuthHeader.basicAuthChallenge("custom1", Charsets.UTF_8)))
-                    }
+        install(Authentication) {
+            jwt(name = "first") {
+                realm = "realm1"
+                verifier(issuer, audience, algorithm)
+                validate {
+                    validated.add("1")
+                    currentPrincipal(it)
                 }
-                jwt(name = "second") {
-                    realm = "realm2"
-                    verifier(issuer, audience, algorithm)
-                    validate { validated.add("2"); currentPrincipal(it) }
-                    challenge { _, _ ->
-                        call.respond(UnauthorizedResponse(HttpAuthHeader.basicAuthChallenge("custom2", Charsets.UTF_8)))
-                    }
+                challenge { _, _ ->
+                    call.respond(UnauthorizedResponse(HttpAuthHeader.basicAuthChallenge("custom1", Charsets.UTF_8)))
                 }
             }
-
-            application.routing {
-                authenticate("first", "second") {
-                    get("/") {
-                        val principal = call.authentication.principal<JWTPrincipal>()!!
-                        call.respondText("Secret info, ${principal.audience}")
-                    }
+            jwt(name = "second") {
+                realm = "realm2"
+                verifier(issuer, audience, algorithm)
+                validate {
+                    validated.add("2")
+                    currentPrincipal(it)
+                }
+                challenge { _, _ ->
+                    call.respond(UnauthorizedResponse(HttpAuthHeader.basicAuthChallenge("custom2", Charsets.UTF_8)))
                 }
             }
+        }
 
-            val token = getToken()
-            handleRequestWithToken(token).let { call ->
-                verifyResponseUnauthorized(call)
-                assertEquals(
-                    "Basic realm=custom1, charset=UTF-8",
-                    call.response.headers[HttpHeaders.WWWAuthenticate]
-                )
+        routing {
+            authenticate("first", "second") {
+                get("/") {
+                    val principal = call.authentication.principal<JWTPrincipal>()!!
+                    call.respondText("Secret info, ${principal.audience}")
+                }
             }
-            assertEquals(setOf("1", "2"), validated)
+        }
 
-            currentPrincipal = { JWTPrincipal(it.payload) }
-            validated.clear()
+        val token = getToken()
+        handleRequestWithToken(token).let { response ->
+            verifyResponseUnauthorized(response)
+            assertEquals(
+                "Basic realm=custom1, charset=UTF-8",
+                response.headers[HttpHeaders.WWWAuthenticate]
+            )
+        }
+        assertEquals(setOf("1", "2"), validated)
 
-            handleRequestWithToken(token).let { call ->
-                assertEquals(HttpStatusCode.OK, call.response.status())
+        currentPrincipal = { JWTPrincipal(it.payload) }
+        validated.clear()
 
-                assertEquals(
-                    "Secret info, [$audience]",
-                    call.response.content
-                )
+        handleRequestWithToken(token).let { response ->
+            assertEquals(HttpStatusCode.OK, response.status)
 
-                assertNull(call.response.headers[HttpHeaders.WWWAuthenticate])
+            assertEquals(
+                "Secret info, [$audience]",
+                response.bodyAsText()
+            )
+
+            assertNull(response.headers[HttpHeaders.WWWAuthenticate])
+        }
+
+        assertEquals(setOf("1"), validated)
+    }
+
+    @Test
+    fun testJwtSuccess() = testApplication {
+        configureServerJwt()
+
+        val token = getToken()
+
+        val response = handleRequestWithToken(token)
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().isNotEmpty())
+    }
+
+    @Test
+    fun testJwtSuccessWithCustomScheme() = testApplication {
+        configureServerJwt {
+            authSchemes("Bearer", "Token")
+        }
+
+        val token = getToken(scheme = "Token")
+
+        val response = handleRequestWithToken(token)
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().isNotEmpty())
+    }
+
+    @Test
+    fun testJwtSuccessWithCustomSchemeWithDifferentCases() = testApplication {
+        configureServerJwt {
+            authSchemes("Bearer", "tokEN")
+        }
+
+        val token = getToken(scheme = "TOKen")
+
+        val response = handleRequestWithToken(token)
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().isNotEmpty())
+    }
+
+    @Test
+    fun testJwtAlgorithmMismatch() = testApplication {
+        configureServerJwt()
+
+        val token = JWT.create().withAudience(audience).withIssuer(issuer).sign(Algorithm.HMAC256("false"))
+        val response = handleRequestWithToken(token)
+        verifyResponseUnauthorized(response)
+    }
+
+    @Test
+    fun testJwtAudienceMismatch() = testApplication {
+        configureServerJwt()
+        val token = JWT.create().withAudience("wrong").withIssuer(issuer).sign(algorithm)
+        val response = handleRequestWithToken(token)
+        verifyResponseUnauthorized(response)
+    }
+
+    @Test
+    fun testJwtIssuerMismatch() = testApplication {
+        configureServerJwt()
+        val token = JWT.create().withAudience(audience).withIssuer("wrong").sign(algorithm)
+        val response = handleRequestWithToken(token)
+        verifyResponseUnauthorized(response)
+    }
+
+    @Test
+    fun testJwkNoAuth() = testApplication {
+        configureServerJwk()
+
+        val response = client.request("/")
+
+        verifyResponseUnauthorized(response)
+    }
+
+    @Test
+    fun testJwkSuccess() = testApplication {
+        configureServerJwk(mock = true)
+
+        val token = getJwkToken()
+
+        val response = handleRequestWithToken(token)
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().isNotEmpty())
+    }
+
+    @Test
+    fun testJwkSuccessNoIssuer() = testApplication {
+        configureServerJwkNoIssuer(mock = true)
+
+        val token = getJwkToken()
+
+        val response = handleRequestWithToken(token)
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().isNotEmpty())
+    }
+
+    @Test
+    fun `jwk network failure produces a server error`() = testApplication {
+        configureServerJwk(
+            jwkProvider = JwkProvider { throw NetworkException("boom", IOException("refused")) }
+        )
+
+        val response = handleRequestWithToken(getJwkToken())
+
+        assertEquals(HttpStatusCode.InternalServerError, response.status)
+    }
+
+    @Test
+    fun `jwk rate limit failure produces a server error`() = testApplication {
+        configureServerJwk(
+            jwkProvider = JwkProvider { throw RateLimitReachedException(1) }
+        )
+
+        val response = handleRequestWithToken(getJwkToken())
+
+        assertEquals(HttpStatusCode.InternalServerError, response.status)
+    }
+
+    @Test
+    fun `malformed jwk response produces a server error`() = testApplication {
+        configureServerJwk(
+            jwkProvider = JwkProvider {
+                throw SigningKeyNotFoundException("Failed to parse jwk from json", IllegalArgumentException())
             }
+        )
 
-            assertEquals(setOf("1"), validated)
-        }
+        val response = handleRequestWithToken(getJwkToken())
+
+        assertEquals(HttpStatusCode.InternalServerError, response.status)
     }
 
     @Test
-    fun testJwtSuccess() {
-        withApplication {
-            application.configureServerJwt()
+    fun testJwkSuccessWithLeeway() = testApplication {
+        configureServerJwtWithLeeway(mock = true)
 
-            val token = getToken()
+        val token = getJwkToken()
 
-            val response = handleRequestWithToken(token)
+        val response = handleRequestWithToken(token)
 
-            assertEquals(HttpStatusCode.OK, response.response.status())
-            assertNotNull(response.response.content)
-        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().isNotEmpty())
     }
 
     @Test
-    fun testJwtSuccessWithCustomScheme() {
-        withApplication {
-            application.configureServerJwt {
-                authSchemes("Bearer", "Token")
-            }
-
-            val token = getToken(scheme = "Token")
-
-            val response = handleRequestWithToken(token)
-
-            assertEquals(HttpStatusCode.OK, response.response.status())
-            assertNotNull(response.response.content)
-        }
+    fun testJwtAuthSchemeMismatch() = testApplication {
+        configureServerJwt()
+        val token = getToken().removePrefix("Bearer ")
+        val response = handleRequestWithToken(token)
+        verifyResponseUnauthorized(response)
     }
 
     @Test
-    fun testJwtSuccessWithCustomSchemeWithDifferentCases() {
-        withApplication {
-            application.configureServerJwt {
-                authSchemes("Bearer", "tokEN")
-            }
-
-            val token = getToken(scheme = "TOKen")
-
-            val response = handleRequestWithToken(token)
-
-            assertEquals(HttpStatusCode.OK, response.response.status())
-            assertNotNull(response.response.content)
-        }
+    fun testJwtAuthSchemeMismatch2() = testApplication {
+        configureServerJwt()
+        val token = getToken("Token")
+        val response = handleRequestWithToken(token)
+        verifyResponseUnauthorized(response)
     }
 
     @Test
-    fun testJwtAlgorithmMismatch() {
-        withApplication {
-            application.configureServerJwt()
-            val token = JWT.create().withAudience(audience).withIssuer(issuer).sign(Algorithm.HMAC256("false"))
-            val response = handleRequestWithToken(token)
-            verifyResponseUnauthorized(response)
-        }
+    fun testJwtAuthSchemeMistake() = testApplication {
+        configureServerJwt()
+        val token = getToken().replace("Bearer", "Bearer:")
+        val response = handleRequestWithToken(token)
+        verifyResponseBadRequest(response)
     }
 
     @Test
-    fun testJwtAudienceMismatch() {
-        withApplication {
-            application.configureServerJwt()
-            val token = JWT.create().withAudience("wrong").withIssuer(issuer).sign(algorithm)
-            val response = handleRequestWithToken(token)
-            verifyResponseUnauthorized(response)
+    fun testJwtBlobPatternMismatch() = testApplication {
+        configureServerJwt()
+        val token = getToken().let {
+            val i = it.length - 2
+            it.replaceRange(i..i + 1, " ")
         }
+        val response = handleRequestWithToken(token)
+        verifyResponseUnauthorized(response)
     }
 
     @Test
-    fun testJwtIssuerMismatch() {
-        withApplication {
-            application.configureServerJwt()
-            val token = JWT.create().withAudience(audience).withIssuer("wrong").sign(algorithm)
-            val response = handleRequestWithToken(token)
-            verifyResponseUnauthorized(response)
-        }
+    fun testJwkAuthSchemeMismatch() = testApplication {
+        configureServerJwk(mock = true)
+        val token = getJwkToken(false)
+        val response = handleRequestWithToken(token)
+        verifyResponseUnauthorized(response)
     }
 
     @Test
-    fun testJwkNoAuth() {
-        withApplication {
-            application.configureServerJwk()
-
-            val response = handleRequest {
-                uri = "/"
-            }
-
-            verifyResponseUnauthorized(response)
-        }
+    fun testJwkAuthSchemeMistake() = testApplication {
+        configureServerJwk(mock = true)
+        val token = getJwkToken(true).replace("Bearer", "Bearer:")
+        val response = handleRequestWithToken(token)
+        verifyResponseBadRequest(response)
     }
 
     @Test
-    fun testJwkSuccess() {
-        withApplication {
-            application.configureServerJwk(mock = true)
-
-            val token = getJwkToken()
-
-            val response = handleRequestWithToken(token)
-
-            assertEquals(HttpStatusCode.OK, response.response.status())
-            assertNotNull(response.response.content)
+    fun testJwkBlobPatternMismatch() = testApplication {
+        configureServerJwk(mock = true)
+        val token = getJwkToken(true).let {
+            val i = it.length - 2
+            it.replaceRange(i..i + 1, " ")
         }
+        val response = handleRequestWithToken(token)
+        verifyResponseUnauthorized(response)
     }
 
     @Test
-    fun testJwkSuccessNoIssuer() {
-        withApplication {
-            application.configureServerJwkNoIssuer(mock = true)
-
-            val token = getJwkToken()
-
-            val response = handleRequestWithToken(token)
-
-            assertEquals(HttpStatusCode.OK, response.response.status())
-            assertNotNull(response.response.content)
-        }
+    fun testJwkAlgorithmMismatch() = testApplication {
+        configureServerJwk(mock = true)
+        val token = JWT.create().withAudience(audience).withIssuer(issuer).sign(Algorithm.HMAC256("false"))
+        val response = handleRequestWithToken(token)
+        verifyResponseUnauthorized(response)
     }
 
     @Test
-    fun testJwkSuccessWithLeeway() {
-        withApplication {
-            application.configureServerJwtWithLeeway(mock = true)
-
-            val token = getJwkToken()
-
-            val response = handleRequestWithToken(token)
-
-            assertEquals(HttpStatusCode.OK, response.response.status())
-            assertNotNull(response.response.content)
-        }
+    fun testJwkAudienceMismatch() = testApplication {
+        configureServerJwk(mock = true)
+        val token = JWT.create().withAudience("wrong").withIssuer(issuer).sign(algorithm)
+        val response = handleRequestWithToken(token)
+        verifyResponseUnauthorized(response)
     }
 
     @Test
-    fun testJwtAuthSchemeMismatch() {
-        withApplication {
-            application.configureServerJwt()
-            val token = getToken().removePrefix("Bearer ")
-            val response = handleRequestWithToken(token)
-            verifyResponseUnauthorized(response)
-        }
+    fun testJwkIssuerMismatch() = testApplication {
+        configureServerJwk(mock = true)
+        val token = JWT.create().withAudience(audience).withIssuer("wrong").sign(algorithm)
+        val response = handleRequestWithToken(token)
+        verifyResponseUnauthorized(response)
     }
 
     @Test
-    fun testJwtAuthSchemeMismatch2() {
-        withApplication {
-            application.configureServerJwt()
-            val token = getToken("Token")
-            val response = handleRequestWithToken(token)
-            verifyResponseUnauthorized(response)
-        }
+    fun testJwkKidMismatch() = testApplication {
+        configureServerJwk(mock = true)
+
+        val token = "Bearer " + JWT.create()
+            .withAudience(audience)
+            .withIssuer(issuer)
+            .withKeyId("wrong")
+            .sign(jwkAlgorithm)
+
+        val response = handleRequestWithToken(token)
+        verifyResponseUnauthorized(response)
     }
 
     @Test
-    fun testJwtAuthSchemeMistake() {
-        withApplication {
-            application.configureServerJwt()
-            val token = getToken().replace("Bearer", "Bearer:")
-            val response = handleRequestWithToken(token)
-            verifyResponseBadRequest(response)
-        }
+    fun testJwkInvalidToken() = testApplication {
+        configureServerJwk(mock = true)
+        val token = "Bearer wrong"
+        val response = handleRequestWithToken(token)
+        verifyResponseUnauthorized(response)
     }
 
     @Test
-    fun testJwtBlobPatternMismatch() {
-        withApplication {
-            application.configureServerJwt()
-            val token = getToken().let {
-                val i = it.length - 2
-                it.replaceRange(i..i + 1, " ")
-            }
-            val response = handleRequestWithToken(token)
-            verifyResponseUnauthorized(response)
-        }
-    }
-
-    @Test
-    fun testJwkAuthSchemeMismatch() {
-        withApplication {
-            application.configureServerJwk(mock = true)
-            val token = getJwkToken(false)
-            val response = handleRequestWithToken(token)
-            verifyResponseUnauthorized(response)
-        }
-    }
-
-    @Test
-    fun testJwkAuthSchemeMistake() {
-        withApplication {
-            application.configureServerJwk(mock = true)
-            val token = getJwkToken(true).replace("Bearer", "Bearer:")
-            val response = handleRequestWithToken(token)
-            verifyResponseBadRequest(response)
-        }
-    }
-
-    @Test
-    fun testJwkBlobPatternMismatch() {
-        withApplication {
-            application.configureServerJwk(mock = true)
-            val token = getJwkToken(true).let {
-                val i = it.length - 2
-                it.replaceRange(i..i + 1, " ")
-            }
-            val response = handleRequestWithToken(token)
-            verifyResponseUnauthorized(response)
-        }
-    }
-
-    @Test
-    fun testJwkAlgorithmMismatch() {
-        withApplication {
-            application.configureServerJwk(mock = true)
-            val token = JWT.create().withAudience(audience).withIssuer(issuer).sign(Algorithm.HMAC256("false"))
-            val response = handleRequestWithToken(token)
-            verifyResponseUnauthorized(response)
-        }
-    }
-
-    @Test
-    fun testJwkAudienceMismatch() {
-        withApplication {
-            application.configureServerJwk(mock = true)
-            val token = JWT.create().withAudience("wrong").withIssuer(issuer).sign(algorithm)
-            val response = handleRequestWithToken(token)
-            verifyResponseUnauthorized(response)
-        }
-    }
-
-    @Test
-    fun testJwkIssuerMismatch() {
-        withApplication {
-            application.configureServerJwk(mock = true)
-            val token = JWT.create().withAudience(audience).withIssuer("wrong").sign(algorithm)
-            val response = handleRequestWithToken(token)
-            verifyResponseUnauthorized(response)
-        }
-    }
-
-    @Test
-    fun testJwkKidMismatch() {
-        withApplication {
-            application.configureServerJwk(mock = true)
-
-            val token = "Bearer " + JWT.create()
-                .withAudience(audience)
-                .withIssuer(issuer)
-                .withKeyId("wrong")
-                .sign(jwkAlgorithm)
-
-            val response = handleRequestWithToken(token)
-            verifyResponseUnauthorized(response)
-        }
-    }
-
-    @Test
-    fun testJwkInvalidToken() {
-        withApplication {
-            application.configureServerJwk(mock = true)
-            val token = "Bearer wrong"
-            val response = handleRequestWithToken(token)
-            verifyResponseUnauthorized(response)
-        }
-    }
-
-    @Test
-    fun testJwkInvalidTokenCustomChallenge() {
-        withApplication {
-            application.configureServerJwk(mock = true, challenge = true)
-            val token = "Bearer wrong"
-            val response = handleRequestWithToken(token)
-            verifyResponseForbidden(response)
-        }
+    fun testJwkInvalidTokenCustomChallenge() = testApplication {
+        configureServerJwk(mock = true, challenge = true)
+        val token = "Bearer wrong"
+        val response = handleRequestWithToken(token)
+        verifyResponseForbidden(response)
     }
 
     @Test
@@ -431,8 +411,93 @@ class JWTAuthTest {
     }
 
     @Test
-    fun authHeaderFromCookie(): Unit = withApplication {
-        application.configureServer {
+    fun `KTOR-9352 makeAlgorithm with EC key type and null algorithm`() {
+        val ecKeyPair = KeyPairGenerator.getInstance("EC").apply {
+            initialize(256, SecureRandom())
+        }.generateKeyPair()
+        val ecAlgorithm = Algorithm.ECDSA256(ecKeyPair.public as ECPublicKey, ecKeyPair.private as ECPrivateKey)
+
+        val token = JWT.create()
+            .withAudience(audience)
+            .withIssuer(issuer)
+            .withKeyId(kid)
+            .sign(ecAlgorithm)
+
+        val jwk = mockk<Jwk> {
+            every { algorithm } returns null
+            every { type } returns "EC"
+            every { publicKey } returns ecKeyPair.public
+        }
+        val provider = mockk<JwkProvider> {
+            every { this@mockk.get(kid) } returns jwk
+        }
+
+        val resolvedAlgorithm = jwk.makeAlgorithm()
+        val verifier = JWT.require(resolvedAlgorithm).withIssuer(issuer).build()
+        verifier.verify(token)
+    }
+
+    @Test
+    fun `KTOR-9352 makeAlgorithm with EC P-384 key and null algorithm`() {
+        val ecKeyPair = KeyPairGenerator.getInstance("EC").apply {
+            initialize(java.security.spec.ECGenParameterSpec("secp384r1"))
+        }.generateKeyPair()
+        val ecAlgorithm = Algorithm.ECDSA384(ecKeyPair.public as ECPublicKey, ecKeyPair.private as ECPrivateKey)
+
+        val token = JWT.create()
+            .withAudience(audience)
+            .withIssuer(issuer)
+            .withKeyId(kid)
+            .sign(ecAlgorithm)
+
+        val jwk = mockk<Jwk> {
+            every { algorithm } returns null
+            every { type } returns "EC"
+            every { publicKey } returns ecKeyPair.public
+        }
+
+        val resolvedAlgorithm = jwk.makeAlgorithm()
+        val verifier = JWT.require(resolvedAlgorithm).withIssuer(issuer).build()
+        verifier.verify(token)
+    }
+
+    @Test
+    fun `KTOR-9352 makeAlgorithm with EC P-521 key and null algorithm`() {
+        val ecKeyPair = KeyPairGenerator.getInstance("EC").apply {
+            initialize(java.security.spec.ECGenParameterSpec("secp521r1"))
+        }.generateKeyPair()
+        val ecAlgorithm = Algorithm.ECDSA512(ecKeyPair.public as ECPublicKey, ecKeyPair.private as ECPrivateKey)
+
+        val token = JWT.create()
+            .withAudience(audience)
+            .withIssuer(issuer)
+            .withKeyId(kid)
+            .sign(ecAlgorithm)
+
+        val jwk = mockk<Jwk> {
+            every { algorithm } returns null
+            every { type } returns "EC"
+            every { publicKey } returns ecKeyPair.public
+        }
+
+        val resolvedAlgorithm = jwk.makeAlgorithm()
+        val verifier = JWT.require(resolvedAlgorithm).withIssuer(issuer).build()
+        verifier.verify(token)
+    }
+
+    @Test
+    fun testVerifyNotProvided() = testApplication {
+        configureServer {
+            jwt {}
+        }
+        assertFailsWith<IllegalArgumentException> {
+            startApplication()
+        }
+    }
+
+    @Test
+    fun authHeaderFromCookie(): Unit = testApplication {
+        configureServer {
             jwt {
                 this@jwt.realm = this@JWTAuthTest.realm
                 authHeader { call ->
@@ -447,44 +512,46 @@ class JWTAuthTest {
 
         val token = getToken()
 
-        val response = handleRequest {
-            uri = "/"
-            addHeader(HttpHeaders.Cookie, "JWT=${token.encodeURLParameter()}")
+        val response = client.request("/") {
+            header(HttpHeaders.Cookie, "JWT=${token.encodeURLParameter()}")
         }
 
-        assertEquals(HttpStatusCode.OK, response.response.status())
-        assertNotNull(response.response.content)
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().isNotEmpty())
     }
 
-    private fun verifyResponseUnauthorized(response: TestApplicationCall) {
-        assertEquals(HttpStatusCode.Unauthorized, response.response.status())
-        assertNull(response.response.content)
+    private suspend fun verifyResponseUnauthorized(response: HttpResponse) {
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertTrue(response.bodyAsText().isEmpty())
     }
 
-    private fun verifyResponseBadRequest(response: TestApplicationCall) {
-        assertEquals(HttpStatusCode.BadRequest, response.response.status())
-        assertNull(response.response.content)
+    private suspend fun verifyResponseBadRequest(response: HttpResponse) {
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertEquals("Invalid auth header", response.bodyAsText())
     }
 
-    private fun verifyResponseForbidden(response: TestApplicationCall) {
-        assertEquals(HttpStatusCode.Forbidden, response.response.status())
-        assertNull(response.response.content)
+    private suspend fun verifyResponseForbidden(response: HttpResponse) {
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertTrue(response.bodyAsText().isEmpty())
     }
 
-    private fun TestApplicationEngine.handleRequestWithToken(token: String): TestApplicationCall {
-        return handleRequest {
-            uri = "/"
-            addHeader(HttpHeaders.Authorization, token)
+    private suspend fun ApplicationTestBuilder.handleRequestWithToken(token: String): HttpResponse {
+        return client.request("/") {
+            header(HttpHeaders.Authorization, token)
         }
     }
 
-    private fun Application.configureServerJwk(mock: Boolean = false, challenge: Boolean = false) = configureServer {
+    private fun ApplicationTestBuilder.configureServerJwk(
+        mock: Boolean = false,
+        challenge: Boolean = false,
+        jwkProvider: JwkProvider? = null,
+    ) = configureServer {
         jwt {
             this@jwt.realm = this@JWTAuthTest.realm
-            if (mock) {
-                verifier(getJwkProviderMock())
-            } else {
-                verifier(issuer)
+            when {
+                jwkProvider != null -> verifier(jwkProvider)
+                mock -> verifier(getJwkProviderMock())
+                else -> verifier(issuer)
             }
             validate { credential ->
                 when {
@@ -507,7 +574,7 @@ class JWTAuthTest {
         }
     }
 
-    private fun Application.configureServerJwkNoIssuer(mock: Boolean = false) = configureServer {
+    private fun ApplicationTestBuilder.configureServerJwkNoIssuer(mock: Boolean = false) = configureServer {
         jwt {
             this@jwt.realm = this@JWTAuthTest.realm
             if (mock) {
@@ -525,7 +592,7 @@ class JWTAuthTest {
         }
     }
 
-    private fun Application.configureServerJwtWithLeeway(mock: Boolean = false) = configureServer {
+    private fun ApplicationTestBuilder.configureServerJwtWithLeeway(mock: Boolean = false) = configureServer {
         jwt {
             this@jwt.realm = this@JWTAuthTest.realm
             if (mock) {
@@ -546,7 +613,7 @@ class JWTAuthTest {
         }
     }
 
-    private fun Application.configureServerJwt(extra: JWTAuthenticationProvider.Config.() -> Unit = {}) =
+    private fun ApplicationTestBuilder.configureServerJwt(extra: JWTAuthenticationProvider.Config.() -> Unit = {}) =
         configureServer {
             jwt {
                 this@jwt.realm = this@JWTAuthTest.realm
@@ -561,7 +628,7 @@ class JWTAuthTest {
             }
         }
 
-    private fun Application.configureServer(authBlock: (AuthenticationConfig.() -> Unit)) {
+    private fun ApplicationTestBuilder.configureServer(authBlock: (AuthenticationConfig.() -> Unit)) {
         install(Authentication) {
             authBlock(this)
         }
@@ -595,6 +662,7 @@ class JWTAuthTest {
     private fun getJwkProviderNullAlgorithmMock(): JwkProvider {
         val jwk = mockk<Jwk> {
             every { algorithm } returns null
+            every { type } returns "RSA"
             every { publicKey } returns keyPair.public
         }
         return mockk {

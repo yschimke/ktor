@@ -1,26 +1,31 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.serialization.gson
 
-import com.google.gson.*
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonSyntaxException
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.serialization.*
-import io.ktor.util.*
 import io.ktor.util.reflect.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.charsets.*
-import io.ktor.utils.io.jvm.javaio.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
-import java.io.*
-import kotlin.reflect.*
-import kotlin.reflect.jvm.*
+import io.ktor.utils.io.core.*
+import kotlinx.coroutines.CopyableThrowable
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collectIndexed
+import java.io.Writer
+import kotlin.reflect.KClass
 
 /**
  * A content converter that uses [Gson]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.gson.GsonConverter)
  *
  * @param gson a configured instance of [Gson]
  */
@@ -52,10 +57,8 @@ public class GsonConverter(private val gson: Gson = Gson()) : ContentConverter {
         }
 
         try {
-            return withContext(Dispatchers.IO) {
-                val reader = content.toInputStream().reader(charset)
-                gson.fromJson(reader, typeInfo.reifiedType)
-            }
+            val text = content.readBuffer().readText(charset)
+            return gson.fromJson(text, typeInfo.reifiedType)
         } catch (cause: JsonSyntaxException) {
             throw JsonConvertException("Illegal json parameter found: ${cause.message}", cause)
         }
@@ -85,14 +88,13 @@ public class GsonConverter(private val gson: Gson = Gson()) : ContentConverter {
     }
 }
 
-@Suppress("DEPRECATION")
 internal fun Gson.isExcluded(type: KClass<*>) =
     excluder().excludeClass(type.java, false)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class ExcludedTypeGsonException(
     private val type: KClass<*>
-) : Exception("Type ${type.jvmName} is excluded so couldn't be used in receive"),
+) : Exception("Type ${type.java.name} is excluded so couldn't be used in receive"),
     CopyableThrowable<ExcludedTypeGsonException> {
 
     override fun createCopy(): ExcludedTypeGsonException = ExcludedTypeGsonException(type).also {
@@ -103,7 +105,9 @@ internal class ExcludedTypeGsonException(
 /**
  * Registers the `application/json` content type to the [ContentNegotiation] plugin using GSON.
  *
- * You can learn more from [Content negotiation and serialization](https://ktor.io/docs/serialization.html).
+ * You can learn more from the corresponding [client](https://ktor.io/docs/client-serialization.html#-3bcvpz_157) and [server](https://ktor.io/docs/server-serialization.html#-230zkf_174) documentation.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.gson.gson)
  */
 public fun Configuration.gson(
     contentType: ContentType = ContentType.Application.Json,

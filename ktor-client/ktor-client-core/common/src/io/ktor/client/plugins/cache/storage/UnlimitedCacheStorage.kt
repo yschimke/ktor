@@ -1,6 +1,6 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.client.plugins.cache.storage
 
@@ -28,6 +28,11 @@ internal class UnlimitedCacheStorage : HttpCacheStorage() {
     }
 
     override fun findByUrl(url: Url): Set<HttpCacheEntry> = store[url] ?: emptySet()
+
+    internal fun remove(url: Url, varyKeys: Map<String, String>) =
+        store[url]?.removeAll { entry ->
+            varyKeys.size == entry.varyKeys.size && varyKeys.all { (key, value) -> entry.varyKeys[key] == value }
+        }
 }
 
 internal class UnlimitedStorage : CacheStorage {
@@ -50,4 +55,18 @@ internal class UnlimitedStorage : CacheStorage {
     }
 
     override suspend fun findAll(url: Url): Set<CachedResponseData> = store[url] ?: emptySet()
+
+    override suspend fun remove(url: Url, varyKeys: Map<String, String>) {
+        store[url]?.removeAll { entry ->
+            varyKeys.size == entry.varyKeys.size && varyKeys.all { (key, value) -> entry.varyKeys[key] == value }
+        }
+    }
+
+    override suspend fun removeAll(url: Url) {
+        store.remove(url)
+    }
+
+    override suspend fun clear() {
+        store.clear()
+    }
 }

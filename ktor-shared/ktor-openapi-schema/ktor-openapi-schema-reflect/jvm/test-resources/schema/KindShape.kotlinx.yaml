@@ -1,0 +1,35 @@
+type: object
+title: io.ktor.openapi.reflect.KindShape
+oneOf:
+  - type: object
+    title: io.ktor.openapi.reflect.KindShape.Circle
+    required:
+      - kind
+      - radius
+    properties:
+      kind:
+        type: string
+        enum:
+          - circle
+      radius:
+        type: number
+  - type: object
+    title: io.ktor.openapi.reflect.KindShape.Rectangle
+    required:
+      - kind
+      - width
+      - height
+    properties:
+      kind:
+        type: string
+        enum:
+          - rectangle
+      width:
+        type: number
+      height:
+        type: number
+discriminator:
+  propertyName: kind
+  mapping:
+    circle: "#/components/schemas/io.ktor.openapi.reflect.KindShape.Circle"
+    rectangle: "#/components/schemas/io.ktor.openapi.reflect.KindShape.Rectangle"

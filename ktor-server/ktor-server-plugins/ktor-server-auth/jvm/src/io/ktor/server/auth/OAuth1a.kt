@@ -14,7 +14,7 @@ import io.ktor.http.content.*
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.util.*
-import io.ktor.utils.io.errors.*
+import kotlinx.io.IOException
 import java.time.*
 import java.util.*
 import javax.crypto.*
@@ -34,7 +34,7 @@ internal suspend fun simpleOAuth1aStep1(
     client: HttpClient,
     settings: OAuthServerSettings.OAuth1aServerSettings,
     callbackUrl: String,
-    nonce: String = generateNonce(),
+    nonce: String? = null,
     extraParameters: List<Pair<String, String>> = emptyList()
 ): OAuthCallback.TokenPair = simpleOAuth1aStep1(
     client,
@@ -42,7 +42,7 @@ internal suspend fun simpleOAuth1aStep1(
     settings.requestTokenUrl,
     callbackUrl,
     settings.consumerKey,
-    nonce,
+    nonce ?: generateNonceSuspend(),
     extraParameters
 )
 
@@ -52,13 +52,13 @@ private suspend fun simpleOAuth1aStep1(
     baseUrl: String,
     callback: String,
     consumerKey: String,
-    nonce: String = generateNonce(),
+    nonce: String? = null,
     extraParameters: List<Pair<String, String>> = emptyList()
 ): OAuthCallback.TokenPair {
     val authHeader = createObtainRequestTokenHeaderInternal(
         callback = callback,
         consumerKey = consumerKey,
-        nonce = nonce
+        nonce = nonce ?: generateNonceSuspend()
     ).signInternal(HttpMethod.Post, baseUrl, secretKey, extraParameters)
 
     val url = baseUrl.appendUrlParameters(extraParameters.formUrlEncode())
@@ -106,7 +106,7 @@ internal suspend fun requestOAuth1aAccessToken(
     client: HttpClient,
     settings: OAuthServerSettings.OAuth1aServerSettings,
     callbackResponse: OAuthCallback.TokenPair,
-    nonce: String = generateNonce(),
+    nonce: String? = null,
     extraParameters: Map<String, String> = emptyMap()
 ): OAuthAccessTokenResponse.OAuth1a = requestOAuth1aAccessToken(
     client,
@@ -115,7 +115,7 @@ internal suspend fun requestOAuth1aAccessToken(
     settings.consumerKey,
     token = callbackResponse.token,
     verifier = callbackResponse.tokenSecret,
-    nonce = nonce,
+    nonce = nonce ?: generateNonceSuspend(),
     extraParameters = extraParameters,
     accessTokenInterceptor = settings.accessTokenInterceptor
 )
@@ -127,12 +127,12 @@ private suspend fun requestOAuth1aAccessToken(
     consumerKey: String,
     token: String,
     verifier: String,
-    nonce: String = generateNonce(),
+    nonce: String? = null,
     extraParameters: Map<String, String> = emptyMap(),
     accessTokenInterceptor: (HttpRequestBuilder.() -> Unit)?
 ): OAuthAccessTokenResponse.OAuth1a {
     val params = listOf(HttpAuthHeader.Parameters.OAuthVerifier to verifier) + extraParameters.toList()
-    val authHeader = createUpgradeRequestTokenHeaderInternal(consumerKey, token, nonce)
+    val authHeader = createUpgradeRequestTokenHeaderInternal(consumerKey, token, nonce ?: generateNonceSuspend())
         .signInternal(HttpMethod.Post, baseUrl, secretKey, params)
 
     // some of really existing OAuth servers don't support other accept header values so keep it
@@ -247,11 +247,15 @@ private fun parametersString(parameters: List<HeaderValueParam>): String =
 
 /**
  * An OAuth1a server error.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.auth.OAuth1aException)
  */
 public sealed class OAuth1aException(message: String) : Exception(message) {
 
     /**
      * Thrown when an OAuth1a server didn't provide access token.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.auth.OAuth1aException.MissingTokenException)
      */
     public class MissingTokenException : OAuth1aException("The OAuth1a server didn't provide access token")
 }

@@ -5,18 +5,19 @@
 package io.ktor.client.engine.winhttp.internal
 
 import io.ktor.client.call.*
-import io.ktor.client.engine.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.core.*
 import io.ktor.utils.io.pool.*
-import kotlinx.atomicfu.*
-import kotlinx.cinterop.*
-import kotlinx.coroutines.*
+import kotlinx.atomicfu.atomic
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
 import kotlin.collections.set
-import kotlin.coroutines.*
+import kotlin.coroutines.coroutineContext
 
 @OptIn(InternalAPI::class)
 internal class WinHttpRequestProducer(
@@ -94,10 +95,7 @@ internal class WinHttpRequestProducer(
 
     private fun HttpRequestData.headersToMap(): MutableMap<String, String> {
         val result = mutableMapOf<String, String>()
-
-        mergeHeaders(headers, body) { key, value ->
-            result[key] = value
-        }
+        forEachHeader(result::put)
 
         return result
     }
@@ -105,12 +103,17 @@ internal class WinHttpRequestProducer(
     @OptIn(DelicateCoroutinesApi::class)
     private suspend fun OutgoingContent.toByteChannel(): ByteReadChannel? = when (this) {
         is OutgoingContent.ByteArrayContent -> ByteReadChannel(bytes())
+
         is OutgoingContent.WriteChannelContent -> GlobalScope.writer(coroutineContext) {
             writeTo(channel)
         }.channel
+
         is OutgoingContent.ReadChannelContent -> readFrom()
+
         is OutgoingContent.NoContent -> null
+
         is OutgoingContent.ContentWrapper -> delegate().toByteChannel()
+
         is OutgoingContent.ProtocolUpgrade -> throw UnsupportedContentTypeException(this)
     }
 

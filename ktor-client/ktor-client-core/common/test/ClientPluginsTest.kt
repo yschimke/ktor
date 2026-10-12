@@ -5,18 +5,22 @@
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.mock.*
+import io.ktor.client.plugins.*
 import io.ktor.client.plugins.api.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.http.content.*
-import io.ktor.test.dispatcher.*
-import kotlin.test.*
+import io.ktor.test.*
+import io.ktor.utils.io.*
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class ClientPluginsTest {
 
     @Test
-    fun testEmptyPluginDoesNotBreakPipeline() = testSuspend {
+    fun testEmptyPluginDoesNotBreakPipeline() = runTest {
         val plugin = createClientPlugin("F", createConfiguration = {}) {
         }
 
@@ -34,7 +38,7 @@ class ClientPluginsTest {
     }
 
     @Test
-    fun testPluginOnRequestOnResponseInterception() = testSuspend {
+    fun testPluginOnRequestOnResponseInterception() = runTest {
         data class Config(var enabled: Boolean = false)
 
         var onResponseCalled = false
@@ -71,7 +75,7 @@ class ClientPluginsTest {
     }
 
     @Test
-    fun testSamePhaseDefinedTwice() = testSuspend {
+    fun testSamePhaseDefinedTwice() = runTest {
         var onCallProcessedTimes = 0
         val plugin = createClientPlugin("F") {
             onRequest { _, _ ->
@@ -98,7 +102,7 @@ class ClientPluginsTest {
     }
 
     @Test
-    fun testTransformBody() = testSuspend {
+    fun testTransformBody() = runTest {
         val plugin = createClientPlugin("F") {
             transformRequestBody { _, content, bodyType ->
                 assertEquals(String::class, bodyType!!.type)
@@ -106,7 +110,7 @@ class ClientPluginsTest {
             }
             transformResponseBody { _, content, requestedType ->
                 assertEquals(String::class, requestedType.type)
-                content.readRemaining().readText() + "!"
+                content.readBuffer().readText() + "!"
             }
         }
 
@@ -136,7 +140,7 @@ class ClientPluginsTest {
     }
 
     @Test
-    fun testCustomHook() = testSuspend {
+    fun testCustomHook() = runTest {
         var hookCalled = false
         val plugin = createClientPlugin("F") {
             on(CustomHook) {
@@ -159,7 +163,7 @@ class ClientPluginsTest {
     }
 
     @Test
-    fun testSendHook() = testSuspend {
+    fun testSendHook() = runTest {
         val plugin = createClientPlugin("F") {
             on(Send) {
                 val call = proceed(it)
@@ -182,5 +186,43 @@ class ClientPluginsTest {
         }
 
         assertEquals("OK", client.get("/").bodyAsText())
+    }
+
+    @Test
+    fun testInstallOrReplace() = runTest {
+        val initialClient = HttpClient(MockEngine) {
+            engine {
+                addHandler {
+                    respond("OK")
+                }
+            }
+
+            install(DefaultRequest) {
+                headers.append("CustomHeader1", "true")
+            }
+        }
+
+        val clientWithInstall = initialClient.config {
+            install(DefaultRequest) {
+                headers.append("CustomHeader2", "true")
+            }
+        }
+
+        val clientWithInstallOrReplace = initialClient.config {
+            installOrReplace(DefaultRequest) {
+                headers.append("CustomHeader2", "false")
+                headers.append("CustomHeader3", "true")
+            }
+        }
+
+        clientWithInstall.get("/ok").apply {
+            assertEquals("true", request.headers["CustomHeader1"])
+            assertEquals("true", request.headers["CustomHeader2"])
+        }
+        clientWithInstallOrReplace.get("/ok").apply {
+            assertTrue { request.headers["CustomHeader1"] == null }
+            assertEquals("false", request.headers.getAll("CustomHeader2")?.joinToString())
+            assertEquals("true", request.headers["CustomHeader3"])
+        }
     }
 }

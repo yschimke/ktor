@@ -5,12 +5,13 @@
 package io.ktor.server.jetty.jakarta
 
 import io.ktor.server.engine.*
-import org.eclipse.jetty.alpn.server.*
-import org.eclipse.jetty.http.*
-import org.eclipse.jetty.http2.*
-import org.eclipse.jetty.http2.server.*
+import org.eclipse.jetty.alpn.server.ALPNServerConnectionFactory
+import org.eclipse.jetty.http.HttpVersion
+import org.eclipse.jetty.http2.HTTP2Cipher
+import org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory
+import org.eclipse.jetty.http2.server.HTTP2ServerConnectionFactory
 import org.eclipse.jetty.server.*
-import org.eclipse.jetty.util.ssl.*
+import org.eclipse.jetty.util.ssl.SslContextFactory
 
 internal fun Server.initializeServer(
     configuration: JettyApplicationEngineBase.Configuration
@@ -21,9 +22,9 @@ internal fun Server.initializeServer(
             sendDateHeader = false
 
             if (ktorConnector.type == ConnectorType.HTTPS) {
-                addCustomizer(SecureRequestCustomizer())
+                addCustomizer(SecureRequestCustomizer().apply(configuration.secureRequestCustomizer))
             }
-        }
+        }.apply(configuration.httpConfiguration)
 
         var alpnAvailable = false
         var alpnConnectionFactory: ALPNServerConnectionFactory?
@@ -35,7 +36,7 @@ internal fun Server.initializeServer(
             }
             http2ConnectionFactory = HTTP2ServerConnectionFactory(httpConfig)
             alpnAvailable = true
-        } catch (t: Throwable) {
+        } catch (_: Throwable) {
             // ALPN or HTTP/2 implemented is not available
             alpnConnectionFactory = null
             http2ConnectionFactory = null
@@ -43,6 +44,7 @@ internal fun Server.initializeServer(
 
         val connectionFactories = when (ktorConnector.type) {
             ConnectorType.HTTP -> arrayOf(HttpConnectionFactory(httpConfig), HTTP2CServerConnectionFactory(httpConfig))
+
             ConnectorType.HTTPS -> arrayOf(
                 SslConnectionFactory(
                     SslContextFactory.Server().apply {
@@ -52,18 +54,20 @@ internal fun Server.initializeServer(
                         }
 
                         keyStore = (ktorConnector as EngineSSLConnectorConfig).keyStore
-                        setKeyManagerPassword(String(ktorConnector.privateKeyPassword()))
-                        setKeyStorePassword(String(ktorConnector.keyStorePassword()))
+                        keyManagerPassword = String(ktorConnector.privateKeyPassword())
+                        keyStorePassword = String(ktorConnector.keyStorePassword())
 
                         needClientAuth = when {
                             ktorConnector.trustStore != null -> {
                                 trustStore = ktorConnector.trustStore
                                 true
                             }
+
                             ktorConnector.trustStorePath != null -> {
                                 trustStorePath = ktorConnector.trustStorePath!!.absolutePath
                                 true
                             }
+
                             else -> false
                         }
 
@@ -87,6 +91,7 @@ internal fun Server.initializeServer(
                 http2ConnectionFactory ?: HTTP2CServerConnectionFactory(httpConfig),
                 HttpConnectionFactory(httpConfig)
             ).filterNotNull().toTypedArray()
+
             else -> throw IllegalArgumentException(
                 "Connector type ${ktorConnector.type} is not supported by Jetty engine implementation"
             )
@@ -98,4 +103,6 @@ internal fun Server.initializeServer(
             idleTimeout = configuration.idleTimeout.inWholeMilliseconds
         }
     }.forEach { this.addConnector(it) }
+
+    configuration.configureServer(this)
 }

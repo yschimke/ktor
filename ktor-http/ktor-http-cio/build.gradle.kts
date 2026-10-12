@@ -1,21 +1,26 @@
+/*
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 description = ""
 
-kotlin.sourceSets {
-    commonMain {
-        dependencies {
-            api(project(":ktor-http"))
-        }
-    }
+plugins {
+    id("ktorbuild.project.library")
+}
 
-    jvmMain {
-        dependencies {
-            api(project(":ktor-network"))
+kotlin {
+    sourceSets {
+        commonMain.dependencies {
+            api(projects.ktorHttp)
+            api(projects.ktorIo)
         }
-    }
 
-    jvmTest {
-        dependencies {
-            implementation(libs.kotlinx.coroutines.test)
+        commonTest.dependencies {
+            implementation(projects.ktorTestBase)
+        }
+
+        jvmMain.dependencies {
+            api(projects.ktorNetwork)
         }
     }
 }

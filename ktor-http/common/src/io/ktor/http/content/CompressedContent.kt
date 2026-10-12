@@ -13,6 +13,8 @@ import kotlin.coroutines.*
 
 /**
  * Returns [OutgoingContent] compressed with [contentEncoder] if possible.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.content.compressed)
  */
 public fun OutgoingContent.compressed(
     contentEncoder: ContentEncoder,
@@ -28,7 +30,9 @@ public fun OutgoingContent.compressed(
         CompressedReadChannelResponse(this, { ByteReadChannel(bytes()) }, contentEncoder, coroutineContext)
 
     is OutgoingContent.NoContent -> null
+
     is OutgoingContent.ProtocolUpgrade -> null
+
     is OutgoingContent.ContentWrapper -> delegate().compressed(contentEncoder, coroutineContext)
 }
 
@@ -44,6 +48,11 @@ private class CompressedReadChannelResponse(
         Headers.build {
             appendFiltered(original.headers) { name, _ -> !name.equals(HttpHeaders.ContentLength, true) }
             append(HttpHeaders.ContentEncoding, encoder.name)
+            append(
+                HttpHeaders.Vary,
+                original.headers[HttpHeaders.Vary]?.plus(", ${HttpHeaders.AcceptEncoding}")
+                    ?: HttpHeaders.AcceptEncoding
+            )
         }
     }
 
@@ -65,6 +74,11 @@ private class CompressedWriteChannelResponse(
         Headers.build {
             appendFiltered(original.headers) { name, _ -> !name.equals(HttpHeaders.ContentLength, true) }
             append(HttpHeaders.ContentEncoding, encoder.name)
+            append(
+                HttpHeaders.Vary,
+                original.headers[HttpHeaders.Vary]?.plus(", ${HttpHeaders.AcceptEncoding}")
+                    ?: HttpHeaders.AcceptEncoding
+            )
         }
     }
 

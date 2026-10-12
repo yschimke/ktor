@@ -1,23 +1,23 @@
+/*
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 import io.ktor.client.request.forms.*
 import io.ktor.http.*
 import kotlin.test.*
 
-/*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
-
 class FormDslTest {
 
     @Test
-    fun testAppendDoesNotEscapeKeyAndFilenameIfNotNeeded() {
+    fun testAppendQuotesKeyAndFilename() {
         val data = formData {
             append(
                 key = "file",
                 filename = "file.name"
             ) {}
         }
-        assertEquals(data.first().headers.getAll(HttpHeaders.ContentDisposition)!![0], "form-data; name=file")
-        assertEquals(data.first().headers.getAll(HttpHeaders.ContentDisposition)!![1], "filename=file.name")
+        assertEquals(data.first().headers.getAll(HttpHeaders.ContentDisposition)!![0], "form-data; name=\"file\"")
+        assertEquals(data.first().headers.getAll(HttpHeaders.ContentDisposition)!![1], "filename=\"file.name\"")
     }
 
     @Test

@@ -1,0 +1,83 @@
+openapi: "3.1.1"
+info:
+  title: "Test API"
+  version: "1.0.0"
+paths:
+  "/messages":
+    get:
+      summary: "get messages"
+      description: "Retrieves a list of messages."
+      parameters:
+      - name: "q"
+        in: "query"
+        description: "An encoded query"
+        schema:
+          type: "string"
+      responses:
+        "200":
+          "description": "A list of messages"
+          "content":
+            "application/yaml":
+              "schema":
+                "type": "array"
+                "items":
+                  "$ref": "#/components/schemas/Message"
+          "x-sample-message":
+            "id": 1
+            "content": "Hello, world!"
+            "timestamp": 16777216000
+        "400":
+          "description": "Invalid query"
+          "content":
+            "text/plain": {}
+components:
+  schemas:
+    "Message.DM":
+      type: "object"
+      title: "Message.DM"
+      required:
+      - "type"
+      - "id"
+      - "content"
+      - "timestamp"
+      properties:
+        "type":
+          type: "string"
+          enum:
+          - "io.ktor.server.routing.openapi.Message.DM"
+        "id":
+          type: "integer"
+        "content":
+          type: "string"
+        "timestamp":
+          type: "integer"
+    "Message.Post":
+      type: "object"
+      title: "Message.Post"
+      required:
+      - "type"
+      - "id"
+      - "content"
+      - "timestamp"
+      properties:
+        "type":
+          type: "string"
+          enum:
+          - "io.ktor.server.routing.openapi.Message.Post"
+        "id":
+          type: "integer"
+        "content":
+          type: "string"
+        "timestamp":
+          type: "integer"
+    "Message":
+      type: "object"
+      title: "Message"
+      oneOf:
+      - $ref: "#/components/schemas/Message.DM"
+      - $ref: "#/components/schemas/Message.Post"
+      discriminator:
+        propertyName: "type"
+        mapping:
+          "io.ktor.server.routing.openapi.Message.DM": "#/components/schemas/Message.DM"
+          "io.ktor.server.routing.openapi.Message.Post": "#/components/schemas/Message.Post"

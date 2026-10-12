@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.plugins
@@ -9,11 +9,12 @@ import io.ktor.client.engine.mock.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import io.ktor.client.tests.utils.*
+import io.ktor.client.test.base.*
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.util.*
 import io.ktor.utils.io.*
+import io.ktor.utils.io.charsets.*
 import io.ktor.utils.io.core.*
 import kotlin.test.*
 
@@ -72,6 +73,232 @@ class ContentNegotiationTests {
     }
 
     @Test
+    fun addAcceptHeadersWithSingleExclusion() {
+        testWithEngine(MockEngine) {
+            val registeredTypesToSend = listOf(
+                ContentType("testing", "a"),
+                ContentType("testing", "b"),
+                ContentType("testing", "c")
+            )
+
+            setupWithContentNegotiation {
+                for (typeToSend in registeredTypesToSend) {
+                    register(typeToSend, TestContentConverter())
+                }
+            }
+
+            test { client ->
+                client.get("https://test.com/") {
+                    exclude(ContentType("testing", "b"))
+                }.apply {
+                    val sentTypes = assertNotNull(call.request.headers.getAll(HttpHeaders.Accept))
+                        .map { ContentType.parse(it) }
+
+                    // Order NOT tested
+                    for (typeToSend in registeredTypesToSend.filter { it.contentSubtype != "b" }) {
+                        assertContains(sentTypes, typeToSend)
+                    }
+                    assertNull(sentTypes.firstOrNull { it.contentSubtype == "b" })
+                }
+            }
+        }
+    }
+
+    @Test
+    fun addAcceptHeadersWithExclusionMatchingParameterizedType() {
+        testWithEngine(MockEngine) {
+            val registeredTypesToSend = listOf(
+                ContentType("testing", "a").withParameter("foo", "bar"),
+                ContentType("testing", "b").withParameter("foo", "bar"),
+                ContentType("testing", "c").withParameter("foo", "bar")
+            )
+
+            setupWithContentNegotiation {
+                for (typeToSend in registeredTypesToSend) {
+                    register(typeToSend, TestContentConverter())
+                }
+            }
+
+            test { client ->
+                client.get("https://test.com/") {
+                    exclude(ContentType("testing", "b"))
+                }.apply {
+                    val sentTypes = assertNotNull(call.request.headers.getAll(HttpHeaders.Accept))
+                        .map { ContentType.parse(it) }
+
+                    // Order NOT tested
+                    for (typeToSend in registeredTypesToSend.filter { it.contentSubtype != "b" }) {
+                        assertContains(sentTypes, typeToSend)
+                    }
+                    assertNull(sentTypes.firstOrNull { it.contentSubtype == "b" })
+                }
+            }
+        }
+    }
+
+    @Test
+    fun addAcceptHeadersWithMultipleExclusions() {
+        testWithEngine(MockEngine) {
+            val registeredTypesToSend = listOf(
+                ContentType("testing", "a"),
+                ContentType("testing", "b"),
+                ContentType("testing", "c")
+            )
+
+            setupWithContentNegotiation {
+                for (typeToSend in registeredTypesToSend) {
+                    register(typeToSend, TestContentConverter())
+                }
+            }
+
+            test { client ->
+                client.get("https://test.com/") {
+                    exclude(ContentType("testing", "b"))
+                    exclude(ContentType("testing", "c"))
+                }.apply {
+                    val sentTypes = assertNotNull(call.request.headers.getAll(HttpHeaders.Accept))
+                        .map { ContentType.parse(it) }
+
+                    // Order NOT tested
+                    assertTrue(sentTypes.size == 1)
+                    assertContains(sentTypes, ContentType("testing", "a"))
+                }
+            }
+
+            test { client ->
+                client.get("https://test.com/") {
+                    exclude(ContentType("testing", "b"), ContentType("testing", "c"))
+                }.apply {
+                    val sentTypes = assertNotNull(call.request.headers.getAll(HttpHeaders.Accept))
+                        .map { ContentType.parse(it) }
+
+                    // Order NOT tested
+                    assertTrue(sentTypes.size == 1)
+                    assertContains(sentTypes, ContentType("testing", "a"))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun addAcceptHeadersWithDefaultQValue() {
+        testWithEngine(MockEngine) {
+            val registeredTypesToSend = listOf(
+                ContentType("testing", "a"),
+                ContentType("testing", "b"),
+                ContentType("testing", "c")
+            )
+
+            setupWithContentNegotiation {
+                for (typeToSend in registeredTypesToSend) {
+                    register(typeToSend, TestContentConverter())
+                    defaultAcceptHeaderQValue = 0.8
+                }
+            }
+
+            test { client ->
+                client.get("https://test.com/").apply {
+                    val sentTypes = assertNotNull(call.request.headers.getAll(HttpHeaders.Accept))
+                        .map { ContentType.parse(it) }
+
+                    // Order NOT tested
+                    for (typeToSend in registeredTypesToSend) {
+                        assertContains(sentTypes, typeToSend.withParameter("q", "0.8"))
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun skipAddAcceptHeadersWithMatchingContentType() {
+        testWithEngine(MockEngine) {
+            setupWithContentNegotiation {
+                register(ContentType("testing", "a"), TestContentConverter())
+            }
+
+            test { client ->
+                client.get("https://test.com/") {
+                    // our explicitly specified lower q-value should take precedence
+                    accept(ContentType("testing", "a", listOf(HeaderValueParam("q", "0.5"))))
+                }.apply {
+                    val sentTypes = assertNotNull(call.request.headers.getAll(HttpHeaders.Accept))
+                        .map { ContentType.parse(it) }
+
+                    assertContains(sentTypes, ContentType("testing", "a", listOf(HeaderValueParam("q", "0.5"))))
+                    assertEquals(1, sentTypes.size)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun doesNotAddAcceptHeadersWhenUserHeaderPresentAndOptionEnabled() {
+        testWithEngine(MockEngine) {
+            setupWithContentNegotiation {
+                register(ContentType.Application.Json, TestContentConverter())
+                acceptHeaderMergeStrategy = ContentTypeMergeStrategy.SkipIfPresent
+            }
+
+            test { client ->
+                client.get("https://test.com/") {
+                    accept(ContentType.Application.OctetStream)
+                }.apply {
+                    val sentHeaders = call.request.headers.getAll(HttpHeaders.Accept)
+                        ?.map { ContentType.parse(it) }
+                        ?: emptyList()
+
+                    assertEquals(1, sentHeaders.size)
+                    assertContains(sentHeaders, ContentType.Application.OctetStream)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun addsAcceptHeadersWhenNoUserHeaderPresentEvenIfOptionEnabled() {
+        testWithEngine(MockEngine) {
+            setupWithContentNegotiation {
+                register(ContentType.Application.Json, TestContentConverter())
+                acceptHeaderMergeStrategy = ContentTypeMergeStrategy.SkipIfPresent
+            }
+
+            test { client ->
+                client.get("https://test.com/").apply {
+                    val sentHeaders = call.request.headers.getAll(HttpHeaders.Accept)
+                        ?.map { ContentType.parse(it) }
+                        ?: emptyList()
+
+                    assertContains(sentHeaders, ContentType.Application.Json)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun testDefaultMergeStrategyWithMalformedAcceptHeader() {
+        testWithEngine(MockEngine) {
+            setupWithContentNegotiation {
+                register(ContentType.Application.Json, TestContentConverter())
+            }
+            test { client ->
+                client.get("https://test.com/") {
+                    header(HttpHeaders.Accept, "malformed-header-value-without-slash")
+                }.apply {
+                    val sentHeaders = call.request.headers.getAll(HttpHeaders.Accept)
+                        ?: emptyList()
+
+                    val containsJson = sentHeaders.any { it.contains("application/json") }
+                    assertTrue(
+                        containsJson,
+                        "It should inject application/json because the existing header is invalid."
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
     fun testKeepsContentType() {
         testWithEngine(MockEngine) {
             setupWithContentNegotiation {
@@ -119,7 +346,7 @@ class ContentNegotiationTests {
             }
             engine {
                 addHandler {
-                    val text = (it.body as OutgoingContent.ReadChannelContent).readFrom().readRemaining().readText()
+                    val text = (it.body as OutgoingContent.ReadChannelContent).readFrom().readBuffer().readText()
                     respond(text)
                 }
             }
@@ -228,6 +455,183 @@ class ContentNegotiationTests {
                     }
                 }
             }
+        }
+    }
+
+    @Test
+    fun matchContentTypeWithSuffixInResponsePipeline() = testWithEngine(MockEngine) {
+        val expectedResponse = StringWrapper("Deserialized by suffix")
+
+        setupWithContentNegotiation {
+            register(ContentType.Application.Json, TestContentConverter()) {
+                deserializeFn = { _, _, _ -> expectedResponse }
+            }
+        }
+
+        test { client ->
+            client.get("https://test.com/") {
+                header(XReturnAs, ContentType.Application.ProblemJson)
+            }.apply {
+                assertEquals(expectedResponse, body())
+            }
+        }
+    }
+
+    @Test
+    fun matchContentTypeWithSuffixIgnoringCase() = testWithEngine(MockEngine) {
+        val expectedResponse = StringWrapper("Deserialized by suffix")
+
+        setupWithContentNegotiation {
+            register(ContentType.Application.Json, TestContentConverter()) {
+                deserializeFn = { _, _, _ -> expectedResponse }
+            }
+        }
+
+        test { client ->
+            client.get("https://test.com/") {
+                header(XReturnAs, "application/PROBLEM+JSON")
+            }.apply {
+                assertEquals(expectedResponse, body())
+            }
+        }
+    }
+
+    @Test
+    fun matchContentTypeWithSuffixInRequestPipeline() = testWithEngine(MockEngine) {
+        val serializedContent = TextContent("SERIALIZED", ContentType.Application.ProblemJson)
+
+        setupWithContentNegotiation {
+            register(ContentType.Application.Json, TestContentConverter()) {
+                serializeFn = { _, _, _, _ -> serializedContent }
+            }
+        }
+
+        test { client ->
+            client.post("https://test.com/") {
+                setBody(Thing)
+                contentType(ContentType.Application.ProblemJson)
+            }.apply {
+                assertEquals(serializedContent, call.request.content)
+            }
+        }
+    }
+
+    @Test
+    fun matchSuffixWhenSuffixDiffersFromRegisteredSubtype() = testWithEngine(MockEngine) {
+        // The `+wbxml` suffix corresponds to `application/vnd.wap.wbxml`, not `application/wbxml`
+        val expectedResponse = StringWrapper("Deserialized by suffix")
+
+        setupWithContentNegotiation {
+            register(ContentType("application", "vnd.wap.wbxml"), TestContentConverter()) {
+                deserializeFn = { _, _, _ -> expectedResponse }
+            }
+        }
+
+        test { client ->
+            client.get("https://test.com/") {
+                header(XReturnAs, "application/vnd.syncml+wbxml")
+            }.apply {
+                assertEquals(expectedResponse, body())
+            }
+        }
+    }
+
+    @Test
+    fun matchSuffixWithDifferentTopLevelType() = testWithEngine(MockEngine) {
+        // RFC 6839 doesn't restrict suffixed types to the `application` top-level type
+        val expectedResponse = StringWrapper("Deserialized by suffix")
+
+        setupWithContentNegotiation {
+            register(ContentType.Application.Xml, TestContentConverter()) {
+                deserializeFn = { _, _, _ -> expectedResponse }
+            }
+        }
+
+        test { client ->
+            client.get("https://test.com/") {
+                header(XReturnAs, ContentType.Image.SVG)
+            }.apply {
+                assertEquals(expectedResponse, body())
+            }
+        }
+    }
+
+    @Test
+    fun dontMatchDifferentSuffix() = testWithEngine(MockEngine) {
+        setupWithContentNegotiation {
+            register(ContentType.Application.Json, TestContentConverter()) {
+                deserializeFn = { _, _, _ -> StringWrapper("Should not be deserialized") }
+            }
+        }
+
+        test { client ->
+            val response = client.get("https://test.com/") {
+                header(XReturnAs, ContentType.Application.ProblemXml)
+            }
+            assertFailsWith<NoTransformationFoundException> { response.body<StringWrapper>() }
+        }
+    }
+
+    @Test
+    fun dontMatchSuffixOfTypeNotRegisteredInRfc6839() = testWithEngine(MockEngine) {
+        setupWithContentNegotiation {
+            register(ContentType("testing", "a"), TestContentConverter()) {
+                deserializeFn = { _, _, _ -> StringWrapper("Should not be deserialized") }
+            }
+        }
+
+        test { client ->
+            val response = client.get("https://test.com/") {
+                header(XReturnAs, "testing/b+a")
+            }
+            assertFailsWith<NoTransformationFoundException> { response.body<StringWrapper>() }
+        }
+    }
+
+    @Test
+    fun dontMatchSuffixWhenSuffixedTypeIsRegistered() = testWithEngine(MockEngine) {
+        setupWithContentNegotiation {
+            register(ContentType.Application.ProblemJson, TestContentConverter()) {
+                deserializeFn = { _, _, _ -> StringWrapper("Should not be deserialized") }
+            }
+        }
+
+        test { client ->
+            val response = client.get("https://test.com/") {
+                header(XReturnAs, "application/other+json")
+            }
+            assertFailsWith<NoTransformationFoundException> { response.body<StringWrapper>() }
+        }
+    }
+
+    @Test
+    fun responseContentTypeCharsetUsedForResponseDeserialization() = testWithEngine(MockEngine) {
+        val responseContentType = ContentType.Application.Xml.withCharset(Charsets.ISO_8859_1)
+        val responseBody = "<response>café</response>"
+
+        config {
+            install(ContentNegotiation) {
+                register(ContentType.Application.Xml, TestContentConverter()) {
+                    deserializeFn = { charset, _, body ->
+                        assertEquals(Charsets.ISO_8859_1, charset)
+                        StringWrapper(body.readBuffer().readText(charset = charset))
+                    }
+                }
+            }
+            engine {
+                addHandler {
+                    respond(
+                        content = ByteReadChannel(responseBody.toByteArray(Charsets.ISO_8859_1)),
+                        headers = headersOf(HttpHeaders.ContentType, responseContentType.toString())
+                    )
+                }
+            }
+        }
+
+        test { client ->
+            val response = client.get("https://test.com/").body<StringWrapper>()
+
+            assertEquals(StringWrapper(responseBody), response)
         }
     }
 

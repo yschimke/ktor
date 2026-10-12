@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 @file:Suppress("DEPRECATION", "DEPRECATION_ERROR")
@@ -23,7 +23,7 @@ internal suspend fun PipelineContext<Any, HttpRequestBuilder>.interceptSendLegac
     content: OutgoingContent,
     scope: HttpClient
 ) {
-    val cache = plugin.findResponse(context, content)
+    val cache = plugin.selectResponseToUpdate(context, content)
     if (cache == null) {
         val header = parseHeaderValue(context.headers[HttpHeaders.CacheControl])
         if (CacheControl.ONLY_IF_CACHED in header) {
@@ -52,7 +52,6 @@ internal suspend fun PipelineContext<Any, HttpRequestBuilder>.interceptSendLegac
     }
 }
 
-@OptIn(InternalAPI::class)
 internal suspend fun PipelineContext<HttpResponse, Unit>.interceptReceiveLegacy(
     response: HttpResponse,
     plugin: HttpCache,
@@ -65,9 +64,11 @@ internal suspend fun PipelineContext<HttpResponse, Unit>.interceptReceiveLegacy(
     }
 
     if (response.status == HttpStatusCode.NotModified) {
-        response.complete()
-        val responseFromCache = plugin.findAndRefresh(response.call.request, response)
-            ?: throw InvalidCacheStateException(response.call.request.url)
+        val responseFromCache = refreshNotModifiedResponse(
+            response.call.request,
+            response,
+            plugin::findAndRefresh,
+        )
 
         scope.monitor.raise(HttpCache.HttpResponseFromCache, responseFromCache)
         proceedWith(responseFromCache)
@@ -88,7 +89,7 @@ private suspend fun PipelineContext<Any, HttpRequestBuilder>.proceedWithWarning(
             append(HttpHeaders.Warning, "110")
         },
         version = cachedCall.response.version,
-        body = cachedCall.response.content,
+        body = cachedCall.response.rawContent,
         callContext = cachedCall.response.coroutineContext
     )
     val call = HttpClientCall(scope, request, response)
@@ -118,34 +119,37 @@ private fun HttpCache.findAndRefresh(request: HttpRequest, response: HttpRespons
 
     val storage = if (CacheControl.PRIVATE in cacheControl) privateStorage else publicStorage
 
-    val varyKeysFrom304 = response.varyKeys()
-    val cache = findResponse(storage, varyKeysFrom304, url, request) ?: return null
-    val newVaryKeys = varyKeysFrom304.ifEmpty { cache.varyKeys }
-    storage.store(url, HttpCacheEntry(response.cacheExpires(isSharedClient), newVaryKeys, cache.response, cache.body))
-    return cache.produceResponse()
+    val cache = storage.selectResponseToUpdate(response, url, request) ?: return null
+    val newVaryKeys = response.varyKeys().ifEmpty { cache.varyKeys }
+    val mergedHeaders = cache.responseHeaders.merge(response.headers)
+    val expires = response.cacheExpires(isSharedClient)
+    val updatedCache = cache.withFreshenedMetadata(expires, newVaryKeys, mergedHeaders)
+
+    if (cache.varyKeys != newVaryKeys && storage is UnlimitedCacheStorage) {
+        storage.remove(url, cache.varyKeys)
+    }
+    storage.store(url, updatedCache)
+    return updatedCache.produceResponse()
 }
 
-private fun HttpCache.findResponse(
-    storage: HttpCacheStorage,
-    varyKeys: Map<String, String>,
+private fun HttpCacheStorage.selectResponseToUpdate(
+    response: HttpResponse,
     url: Url,
     request: HttpRequest
-): HttpCacheEntry? = when {
-    varyKeys.isNotEmpty() -> {
-        storage.find(url, varyKeys)
-    }
+): HttpCacheEntry? {
+    val varyKeys = response.varyKeys().takeIf { it.isNotEmpty() }
+    varyKeys?.let { find(url, varyKeys) }?.let { return it }
 
-    else -> {
-        val requestHeaders = mergedHeadersLookup(request.content, request.headers::get, request.headers::getAll)
-        storage.findByUrl(url)
-            .sortedByDescending { it.response.responseTime }
-            .firstOrNull { cachedResponse ->
-                cachedResponse.varyKeys.all { (key, value) -> requestHeaders(key) == value }
-            }
-    }
+    val requestHeaders = mergedHeadersLookup(request.content, request.headers::get, request.headers::getAll)
+    val cachedResponses = findByUrl(url).sortedByDescending { it.response.responseTime }
+
+    cachedResponses.firstOrNull { it.varyKeys.all { (key, value) -> requestHeaders(key) == value } }
+        ?.let { return it }
+
+    return cachedResponses.selectResponseToFreshen(response) { it.responseHeaders }
 }
 
-private fun HttpCache.findResponse(context: HttpRequestBuilder, content: OutgoingContent): HttpCacheEntry? {
+private fun HttpCache.selectResponseToUpdate(context: HttpRequestBuilder, content: OutgoingContent): HttpCacheEntry? {
     val url = Url(context.url)
     val lookup = mergedHeadersLookup(content, context.headers::get, context.headers::getAll)
 

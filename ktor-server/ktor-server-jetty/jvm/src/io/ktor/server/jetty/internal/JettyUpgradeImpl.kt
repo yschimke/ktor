@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.jetty.internal
@@ -14,9 +14,9 @@ import java.util.concurrent.*
 import javax.servlet.http.*
 import kotlin.coroutines.*
 
-@Suppress("KDocMissingDocumentation")
 @InternalAPI
 public object JettyUpgradeImpl : ServletUpgrade {
+
     override suspend fun performUpgrade(
         upgrade: OutgoingContent.ProtocolUpgrade,
         servletRequest: HttpServletRequest,
@@ -33,32 +33,29 @@ public object JettyUpgradeImpl : ServletUpgrade {
         endPoint.idleTimeout = TimeUnit.MINUTES.toMillis(60L)
 
         withContext(engineContext + CoroutineName("upgrade-scope")) {
-            try {
-                coroutineScope {
-                    val inputChannel = ByteChannel(autoFlush = true)
-                    val reader = EndPointReader(endPoint, coroutineContext, inputChannel)
-                    val writer = endPointWriter(endPoint)
-                    val outputChannel = writer.channel
+            coroutineScope {
+                val inputChannel = ByteChannel(autoFlush = true)
+                val reader = EndPointReader(endPoint, coroutineContext, inputChannel)
+                val writer = endPointWriter(endPoint)
+                val outputChannel = writer.channel
 
-                    servletRequest.setAttribute(HttpConnection.UPGRADE_CONNECTION_ATTRIBUTE, reader)
-                    if (endPoint is AbstractEndPoint) {
-                        endPoint.upgrade(reader)
-                    }
-                    val upgradeJob = upgrade.upgrade(
-                        inputChannel,
-                        outputChannel,
-                        coroutineContext,
-                        coroutineContext + userContext
-                    )
-
-                    upgradeJob.invokeOnCompletion {
-                        inputChannel.cancel()
-                        outputChannel.close()
-                        cancel()
-                    }
+                servletRequest.setAttribute(HttpConnection.UPGRADE_CONNECTION_ATTRIBUTE, reader)
+                if (endPoint is AbstractEndPoint) {
+                    endPoint.upgrade(reader)
                 }
-            } finally {
-                connection.close()
+                val upgradeJob = upgrade.upgrade(
+                    inputChannel,
+                    outputChannel,
+                    coroutineContext,
+                    coroutineContext + userContext
+                )
+
+                upgradeJob.invokeOnCompletion {
+                    inputChannel.cancel()
+                    @Suppress("DEPRECATION")
+                    outputChannel.close()
+                    cancel()
+                }
             }
         }
     }

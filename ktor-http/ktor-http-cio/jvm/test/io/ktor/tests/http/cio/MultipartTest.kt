@@ -1,16 +1,21 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.tests.http.cio
 
 import io.ktor.http.cio.*
+import io.ktor.test.*
 import io.ktor.utils.io.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.*
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.channels.consumeEach
+import kotlinx.coroutines.channels.toList
+import kotlinx.coroutines.runBlocking
+import kotlinx.io.IOException
 import kotlin.test.*
 
-@OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
+@OptIn(DelicateCoroutinesApi::class)
 class MultipartTest {
     @Test
     fun smokeTest() = runBlocking {
@@ -65,19 +70,19 @@ class MultipartTest {
         assertEquals("preamble\r\n", preamble.body.readText())
 
         val recipient = allEvents[1] as MultipartEvent.MultipartPart
-        assertEquals("recipient@example.com", recipient.body.readRemaining().readText())
+        assertEquals("recipient@example.com", recipient.body.readBuffer().readText())
 
         val title = allEvents[2] as MultipartEvent.MultipartPart
-        assertEquals("Good news", title.body.readRemaining().readText())
+        assertEquals("Good news", title.body.readBuffer().readText())
 
         val text = allEvents[3] as MultipartEvent.MultipartPart
-        assertEquals("See attachments...", text.body.readRemaining().readText())
+        assertEquals("See attachments...", text.body.readBuffer().readText())
 
         val jpeg1 = allEvents[4] as MultipartEvent.MultipartPart
-        assertEquals("JFIF first", jpeg1.body.readRemaining().readText())
+        assertEquals("JFIF first", jpeg1.body.readBuffer().readText())
 
         val jpeg2 = allEvents[5] as MultipartEvent.MultipartPart
-        assertEquals("JFIF second", jpeg2.body.readRemaining().readText())
+        assertEquals("JFIF second", jpeg2.body.readBuffer().readText())
 
         val epilogue = allEvents[6] as MultipartEvent.Epilogue
         assertEquals("epilogue", epilogue.body.readText())
@@ -136,19 +141,19 @@ class MultipartTest {
         assertEquals("preamble\r\n", preamble.body.readText())
 
         val recipient = allEvents[1] as MultipartEvent.MultipartPart
-        assertEquals("recipient@example.com", recipient.body.readRemaining().readText())
+        assertEquals("recipient@example.com", recipient.body.readBuffer().readText())
 
         val title = allEvents[2] as MultipartEvent.MultipartPart
-        assertEquals("Good news", title.body.readRemaining().readText())
+        assertEquals("Good news", title.body.readBuffer().readText())
 
         val text = allEvents[3] as MultipartEvent.MultipartPart
-        assertEquals("See attachments...", text.body.readRemaining().readText())
+        assertEquals("See attachments...", text.body.readBuffer().readText())
 
         val jpeg1 = allEvents[4] as MultipartEvent.MultipartPart
-        assertEquals("JFIF first", jpeg1.body.readRemaining().readText())
+        assertEquals("JFIF first", jpeg1.body.readBuffer().readText())
 
         val jpeg2 = allEvents[5] as MultipartEvent.MultipartPart
-        assertEquals("JFIF second", jpeg2.body.readRemaining().readText())
+        assertEquals("JFIF second", jpeg2.body.readBuffer().readText())
     }
 
     @Test
@@ -182,7 +187,7 @@ class MultipartTest {
                 "resolve": {
                     "modules": [
                         "node_modules" // this works well
-                        //"/absolute/path/to/dir/node_modules"   // this doens't
+                        //"/absolute/path/to/dir/node_modules"   // this doesn't
                     ]
                 }
             ```
@@ -206,9 +211,8 @@ class MultipartTest {
         val title = parts.getOrNull(0) ?: fail("No title part found")
         val file = parts.getOrNull(1) ?: fail("No file part found")
 
-        assertEquals("Hello", title.body.readRemaining().readText())
-        val fileContent = file.body.readRemaining().readText()
-//        println(fileContent)
+        assertEquals("Hello", title.body.readBuffer().readText())
+        val fileContent = file.body.readBuffer().readText()
         assertEquals(380, fileContent.length)
     }
 
@@ -266,21 +270,71 @@ class MultipartTest {
         assertEquals("preamble\r\n", preamble.body.readText())
 
         val recipient = allEvents[1] as MultipartEvent.MultipartPart
-        assertEquals("recipient@example.com", recipient.body.readRemaining().readText())
+        assertEquals("recipient@example.com", recipient.body.readBuffer().readText())
 
         val title = allEvents[2] as MultipartEvent.MultipartPart
-        assertEquals("Good news", title.body.readRemaining().readText())
+        assertEquals("Good news", title.body.readBuffer().readText())
 
         val text = allEvents[3] as MultipartEvent.MultipartPart
-        assertEquals("See attachments...", text.body.readRemaining().readText())
+        assertEquals("See attachments...", text.body.readBuffer().readText())
 
         val jpeg1 = allEvents[4] as MultipartEvent.MultipartPart
-        assertEquals("JFIF first", jpeg1.body.readRemaining().readText())
+        assertEquals("JFIF first", jpeg1.body.readBuffer().readText())
 
         val jpeg2 = allEvents[5] as MultipartEvent.MultipartPart
-        assertEquals("JFIF second", jpeg2.body.readRemaining().readText())
+        assertEquals("JFIF second", jpeg2.body.readBuffer().readText())
 
         val epilogue = allEvents[6] as MultipartEvent.Epilogue
+        assertEquals("epilogue", epilogue.body.readText())
+    }
+
+    @Test
+    fun testEmptyPart() = runBlocking {
+        val body = """
+            POST /send-message.html HTTP/1.1
+            Host: webmail.example.com
+            Referer: http://webmail.example.com/send-message.html
+            User-Agent: BrowserForDummies/4.67b
+            Content-Type: multipart/form-data; boundary=Asrf456BGe4h
+            Connection: close
+            Keep-Alive: 300
+
+            preamble
+            --Asrf456BGe4h
+            Content-Disposition: form-data; name="DestAddress"
+
+            recipient@example.com
+            --Asrf456BGe4h
+            --Asrf456BGe4h
+            Content-Disposition: form-data; name="MessageText"
+
+            See attachments...
+            --Asrf456BGe4h
+            --Asrf456BGe4h--
+            epilogue
+        """.trimIndent()
+            .lines()
+            .joinToString("\r\n")
+
+        val ch = ByteReadChannel(body.toByteArray())
+        val request = parseRequest(ch)!!
+        val mp = parseMultipart(ch, request.headers)
+
+        val allEvents = ArrayList<MultipartEvent>()
+        mp.consumeEach { allEvents.add(it) }
+
+        assertEquals(4, allEvents.size)
+
+        val preamble = allEvents[0] as MultipartEvent.Preamble
+        assertEquals("preamble\r\n", preamble.body.readText())
+
+        val recipient = allEvents[1] as MultipartEvent.MultipartPart
+        assertEquals("recipient@example.com", recipient.body.readBuffer().readText())
+
+        val text = allEvents[2] as MultipartEvent.MultipartPart
+        assertEquals("See attachments...", text.body.readBuffer().readText())
+
+        val epilogue = allEvents[3] as MultipartEvent.Epilogue
         assertEquals("epilogue", epilogue.body.readText())
     }
 
@@ -334,6 +388,17 @@ class MultipartTest {
         assertFails {
             parseBoundaryInternal("multipart/mixed; boundary= \"\" ")
         }
+    }
+
+    @Test
+    fun testParseContentType() = runTest {
+        fun testContentType(contentType: String) {
+            parseMultipart(ByteReadChannel.Empty, "$contentType; boundary=A", 0L)
+        }
+
+        testContentType("multipart/mixed")
+        testContentType("Multipart/mixed")
+        assertFailsWith<IOException> { testContentType("multi-part/mixed") }
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -409,21 +474,18 @@ class MultipartTest {
             val events = parseMultipart(
                 input,
                 "multipart/form-data; boundary=boundary",
-                body.length.toLong()
+                body.length.toLong(),
+                Long.MAX_VALUE
             ).toList()
 
             assertEquals(1, events.size)
-            assertEquals("value", (events[0] as MultipartEvent.MultipartPart).body.readRemaining().readText())
+            assertEquals("value", (events[0] as MultipartEvent.MultipartPart).body.readBuffer().readText())
         }
     }
 
     private fun testBoundary(expectedBoundary: String, headerValue: String) {
         val boundary = parseBoundaryInternal(headerValue)
-        val actualBoundary = String(
-            boundary.array(),
-            boundary.arrayOffset() + boundary.position(),
-            boundary.remaining()
-        )
+        val actualBoundary = String(boundary)
 
         assertEquals(expectedBoundary, actualBoundary)
     }

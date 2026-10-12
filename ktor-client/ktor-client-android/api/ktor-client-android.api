@@ -1,6 +1,9 @@
 public final class io/ktor/client/engine/android/Android : io/ktor/client/engine/HttpClientEngineFactory {
 	public static final field INSTANCE Lio/ktor/client/engine/android/Android;
 	public fun create (Lkotlin/jvm/functions/Function1;)Lio/ktor/client/engine/HttpClientEngine;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/ktor/client/engine/android/AndroidClientEngine : io/ktor/client/engine/HttpClientEngineBase {
@@ -21,11 +24,14 @@ public final class io/ktor/client/engine/android/AndroidEngineConfig : io/ktor/c
 	public final fun setRequestConfig (Lkotlin/jvm/functions/Function1;)V
 	public final fun setSocketTimeout (I)V
 	public final fun setSslManager (Lkotlin/jvm/functions/Function1;)V
+	public final fun useHttpEngine (Landroid/content/Context;Lkotlin/jvm/functions/Function1;)V
+	public static synthetic fun useHttpEngine$default (Lio/ktor/client/engine/android/AndroidEngineConfig;Landroid/content/Context;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)V
 }
 
 public final class io/ktor/client/engine/android/AndroidEngineContainer : io/ktor/client/HttpClientEngineContainer {
 	public fun <init> ()V
 	public fun getFactory ()Lio/ktor/client/engine/HttpClientEngineFactory;
+	public fun getPriority ()D
 	public fun toString ()Ljava/lang/String;
 }
 

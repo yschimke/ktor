@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.serialization.kotlinx.json
@@ -9,8 +9,6 @@ import io.ktor.serialization.*
 import io.ktor.serialization.kotlinx.*
 import kotlinx.serialization.*
 import kotlinx.serialization.json.*
-import kotlinx.serialization.modules.*
-import kotlin.native.concurrent.*
 
 /**
  * The default JSON configuration used in [KotlinxSerializationConverter]. The settings are:
@@ -20,16 +18,19 @@ import kotlin.native.concurrent.*
  * - keys and values are quoted, non-quoted are not allowed
  *
  * See [Json] for more details.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.kotlinx.json.DefaultJson)
  */
 
-public val DefaultJson: Json = Json {
-    encodeDefaults = true
-    isLenient = true
-    allowSpecialFloatingPointValues = true
-    allowStructuredMapKeys = true
-    prettyPrint = false
-    useArrayPolymorphism = false
-}
+public val DefaultJson: Json =
+    Json {
+        encodeDefaults = true
+        isLenient = true
+        allowSpecialFloatingPointValues = true
+        allowStructuredMapKeys = true
+        prettyPrint = false
+        useArrayPolymorphism = false
+    }
 
 /**
  * Registers the `application/json` (or another specified [contentType]) content type
@@ -45,7 +46,9 @@ public val DefaultJson: Json = Json {
  *     })
  * }
  * ```
- * You can learn more from [Content negotiation and serialization](https://ktor.io/docs/serialization.html).
+ * You can learn more from the corresponding [client](https://ktor.io/docs/client-serialization.html#-3bcvpz_156) and [server](https://ktor.io/docs/server-serialization.html#-230zkf_173) documentation.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.kotlinx.json.json)
  *
  * @param json a format instance (optional)
  * @param contentType to register with, `application/json` by default
@@ -55,4 +58,23 @@ public fun Configuration.json(
     contentType: ContentType = ContentType.Application.Json
 ) {
     serialization(contentType, json)
+}
+
+/**
+ * Registers the `application/json` (or another specified [contentType]) content type
+ * to the [ContentNegotiation] plugin using kotlinx.serialization.
+ *
+ * This uses the experimental JSON support for kotlinx-io to stream content more efficiently.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.kotlinx.json.jsonIo)
+ *
+ * @param json A JSON instance used for serialization and deserialization. Defaults to an instance of DefaultJson.
+ * @param contentType The content type to be associated with the JSON converter. Defaults to ContentType.Application.Json.
+ */
+@ExperimentalSerializationApi
+public fun Configuration.jsonIo(
+    json: Json = DefaultJson,
+    contentType: ContentType = ContentType.Application.Json
+) {
+    register(contentType, ExperimentalJsonConverter(json))
 }

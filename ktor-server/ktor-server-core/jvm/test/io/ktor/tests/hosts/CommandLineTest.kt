@@ -8,7 +8,6 @@ import io.ktor.server.engine.*
 import org.junit.jupiter.api.extension.*
 import java.io.*
 import java.net.*
-import java.util.*
 import kotlin.test.*
 
 @ExtendWith(UseIsolatedClassLoader::class)
@@ -159,13 +158,17 @@ class CommandLineTest {
         assertEquals("main_value", config.config("main.config").property("property").getString())
     }
 
-    private tailrec fun findContainingZipFileOrUri(uri: URI): Pair<File?, URI?> {
-        if (uri.scheme == "file") {
-            return Pair(File(uri.path.substringBefore("!")), null)
-        } else if (uri.scheme == "jrt") {
-            return Pair(null, uri)
-        } else {
-            return findContainingZipFileOrUri(URI(uri.rawSchemeSpecificPart))
+    private tailrec fun findContainingZipFileOrUri(uri: URI): Pair<File?, URI?> = when (uri.scheme) {
+        "file" -> {
+            Pair(File(uri.path.substringBefore("!")), null)
+        }
+
+        "jrt" -> {
+            Pair(null, uri)
+        }
+
+        else -> {
+            findContainingZipFileOrUri(URI(uri.rawSchemeSpecificPart))
         }
     }
 }

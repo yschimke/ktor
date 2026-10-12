@@ -1,42 +1,58 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 @file:Suppress("unused", "UNUSED_PARAMETER")
 
 package io.ktor.tests.hosts
 
-import com.typesafe.config.*
+import com.typesafe.config.ConfigFactory
+import io.ktor.client.request.*
 import io.ktor.events.*
-import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.config.*
 import io.ktor.server.engine.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.testing.*
+import io.ktor.tests.hosts.EmbeddedServerReloadingTests.Companion.addLoadedModule
 import io.ktor.util.*
-import kotlinx.coroutines.*
-import org.slf4j.helpers.*
-import kotlin.reflect.*
-import kotlin.reflect.jvm.*
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.runBlocking
+import org.slf4j.helpers.NOPLogger
+import java.io.File
+import java.net.URLClassLoader
+import kotlin.io.path.createTempDirectory
+import kotlin.reflect.KClass
+import kotlin.reflect.KFunction
+import kotlin.reflect.KFunction0
+import kotlin.reflect.jvm.javaMethod
+import kotlin.reflect.jvm.jvmName
 import kotlin.test.*
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 class EmbeddedServerReloadingTests {
 
     @Test
-    fun `top level extension function as module function`() {
+    fun `top level extension functions as module function`() {
         val environment = applicationEnvironment {
             config = HoconApplicationConfig(
                 ConfigFactory.parseMap(
                     mapOf(
                         "ktor.deployment.environment" to "test",
-                        "ktor.application.modules" to listOf(Application::topLevelExtensionFunction.fqName)
+                        "ktor.application.modules" to listOf(
+                            Application::topLevelExtensionFunction.fqName,
+                            Application::topLevelSuspendExtensionFunction.fqName,
+                        )
                     )
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -45,6 +61,7 @@ class EmbeddedServerReloadingTests {
         val application = server.application
         assertNotNull(application)
         assertEquals("topLevelExtensionFunction", application.attributes[TestKey])
+        assertEquals("topLevelSuspendExtensionFunction", application.attributes[TestKey2])
         server.stop()
     }
 
@@ -62,7 +79,7 @@ class EmbeddedServerReloadingTests {
             )
         }
 
-        val props = applicationProperties(environment)
+        val props = serverConfig(environment)
         val server = EmbeddedServer(props, DummyEngineFactory)
 
         server.start()
@@ -85,7 +102,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -111,7 +128,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -137,7 +154,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -164,7 +181,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -191,7 +208,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -217,7 +234,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -244,7 +261,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -270,7 +287,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -294,7 +311,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -319,7 +336,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -343,7 +360,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -367,7 +384,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -387,13 +404,15 @@ class EmbeddedServerReloadingTests {
                     mapOf(
                         "ktor.deployment.environment" to "test",
                         "ktor.application.modules" to listOf(
-                            EmbeddedServerReloadingTests::class.jvmName + "Kt.topLevelWithDefaultArg"
+                            Application::defaultArgBoolean.fqName,
+                            Application::defaultArgContainingApplicationWord.fqName,
+                            Application::defaultArgInline.fqName,
                         )
                     )
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -401,7 +420,14 @@ class EmbeddedServerReloadingTests {
         server.start()
         val application = server.application
         assertNotNull(application)
-        assertEquals("topLevelWithDefaultArg", application.attributes[TestKey])
+        assertEquals(
+            setOf(
+                "defaultArgBoolean",
+                "defaultArgContainingApplicationWord",
+                "defaultArgInline",
+            ),
+            application.loadedModules,
+        )
         server.stop()
     }
 
@@ -417,7 +443,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -443,7 +469,7 @@ class EmbeddedServerReloadingTests {
                 )
             )
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             developmentMode = false
         }
         val server = EmbeddedServer(props, DummyEngineFactory)
@@ -484,7 +510,6 @@ class EmbeddedServerReloadingTests {
     }
 
     class ClassModuleFunctionHolder {
-        @Suppress("UNUSED")
         fun Application.classExtensionFunction() {
             attributes.put(TestKey, "classExtensionFunction")
         }
@@ -495,7 +520,6 @@ class EmbeddedServerReloadingTests {
     }
 
     object ObjectModuleFunctionHolder {
-        @Suppress("UNUSED")
         fun Application.objectExtensionFunction() {
             attributes.put(TestKey, "objectExtensionFunction")
         }
@@ -507,13 +531,21 @@ class EmbeddedServerReloadingTests {
 
     companion object {
         val TestKey = AttributeKey<String>("test-key")
+        val TestKey2 = AttributeKey<String>("test-key2")
+        private val LoadedModulesKey = AttributeKey<MutableSet<String>>("loaded-modules")
+
+        val Application.loadedModules: Set<String>
+            get() = attributes.getOrNull(LoadedModulesKey).orEmpty()
+
+        fun Application.addLoadedModule(name: String) {
+            attributes.computeIfAbsent(LoadedModulesKey) { mutableSetOf() }.add(name)
+        }
 
         private val KFunction<*>.fqName: String
             get() = javaMethod!!.declaringClass.name + "." + name
 
         private fun KClass<*>.functionFqName(name: String) = "$jvmName.$name"
 
-        @Suppress("UNUSED")
         fun Application.companionObjectExtensionFunction() {
             attributes.put(TestKey, "companionObjectExtensionFunction")
         }
@@ -522,7 +554,6 @@ class EmbeddedServerReloadingTests {
             app.attributes.put(TestKey, "companionObjectFunction")
         }
 
-        @Suppress("UNUSED")
         @JvmStatic
         fun Application.companionObjectJvmStaticExtensionFunction() {
             attributes.put(TestKey, "companionObjectJvmStaticExtensionFunction")
@@ -540,9 +571,232 @@ class EmbeddedServerReloadingTests {
     }
 
     @Test
+    fun `auto-reload is disabled when classloader is not a URLClassLoader`() {
+        // Simulate a fat-JAR launcher classloader (e.g. Spring Boot LaunchedClassLoader),
+        // which is NOT a URLClassLoader. Using OverridingClassLoader in this case causes
+        // LinkageError / ClassCastException because it can't handle the custom URL scheme.
+        val realLoader = Thread.currentThread().contextClassLoader
+        val fatJarSimulator = object : ClassLoader(realLoader) {
+            override fun toString() = "FatJarSimulatorClassLoader"
+        }
+
+        var capturedClassLoader: ClassLoader? = null
+        val environment = applicationEnvironment {
+            classLoader = fatJarSimulator
+            config = HoconApplicationConfig(
+                ConfigFactory.parseMap(mapOf("ktor.deployment.watch" to listOf("ktor-server-core")))
+            )
+        }
+        val props = serverConfig(environment) {
+            developmentMode = true
+            module { capturedClassLoader = Thread.currentThread().contextClassLoader }
+        }
+        val server = EmbeddedServer(props, DummyEngineFactory)
+
+        server.start()
+        assertNotNull(server.application)
+
+        // When the base classloader is not a URLClassLoader, auto-reload must be disabled:
+        // the module must run under the original base classloader, not under OverridingClassLoader.
+        assertSame(
+            fatJarSimulator,
+            capturedClassLoader,
+            "Expected the original classloader. " +
+                "Auto-reload should be disabled for non-URLClassLoader environments (fat-JARs)."
+        )
+
+        server.stop()
+    }
+
+    class AppEvent(val app: Application, val type: Type) {
+        enum class Type {
+            Starting,
+            Stopping,
+            Stopped
+        }
+    }
+
+    @Test
+    fun `failed explicit reload stops application and allows retry`() {
+        var moduleCallCount = 0
+        var appShouldFailToStart = false
+        val lifecycle = mutableListOf<AppEvent>()
+
+        val environment = applicationEnvironment {
+            classLoader = this::class.java.classLoader
+            log = NOPLogger.NOP_LOGGER
+            config = MapApplicationConfig()
+        }
+
+        val props = serverConfig(environment) {
+            developmentMode = false
+            module {
+                val callIndex = moduleCallCount++
+                attributes.put(TestKey, "load-$callIndex")
+                if (appShouldFailToStart) {
+                    error("Simulated reload failure on call #$callIndex")
+                }
+            }
+        }
+        val server = EmbeddedServer(props, DummyEngineFactory).apply {
+            monitor.subscribe(ApplicationStarting) { lifecycle += AppEvent(app = it, type = AppEvent.Type.Starting) }
+            monitor.subscribe(ApplicationStopping) { lifecycle += AppEvent(app = it, type = AppEvent.Type.Stopping) }
+            monitor.subscribe(ApplicationStopped) { lifecycle += AppEvent(app = it, type = AppEvent.Type.Stopped) }
+            start()
+        }
+
+        val initialApp = server.application
+        assertEquals("load-0", initialApp.attributes[TestKey])
+        assertTrue(initialApp.isActive)
+
+        appShouldFailToStart = true
+        assertFailsWith<IllegalStateException> { server.reload() }
+        assertEquals(2, moduleCallCount)
+        assertFalse(initialApp.isActive)
+
+        assertFailsWith<IllegalStateException> { server.application }
+
+        val stoppedIndex = lifecycle.indexOfFirst { it.type == AppEvent.Type.Stopped && it.app === initialApp }
+        val nextStartingIndex = lifecycle.indexOfFirst { it.type == AppEvent.Type.Starting && it.app !== initialApp }
+        assertTrue(
+            stoppedIndex in 0..<nextStartingIndex,
+            "Expected old generation to stop before the replacement starts: $lifecycle"
+        )
+
+        val failedApp = lifecycle.first { it.type == AppEvent.Type.Starting && it.app !== initialApp }.app
+        assertEquals(
+            1,
+            lifecycle.count { it.type == AppEvent.Type.Stopping && it.app === failedApp },
+            "Failed generation should be cleaned exactly once: $lifecycle"
+        )
+        assertTrue(
+            lifecycle.any { it.type == AppEvent.Type.Stopped && it.app === failedApp },
+            "Expected failed partial generation to be cleaned up: $lifecycle"
+        )
+
+        appShouldFailToStart = false
+        server.reload()
+        assertEquals(3, moduleCallCount)
+        assertEquals("load-2", server.application.attributes[TestKey])
+        assertTrue(server.application.isActive)
+
+        server.stop()
+    }
+
+    @Test
+    fun `auto-reload retries only after another watched file change`() {
+        val watchDir = createTempDirectory(prefix = "ktor-autoreload-watch-").toFile().also { it.deleteOnExit() }
+        val marker = File(watchDir, "marker.txt").also { it.writeText("initial") }
+        val watchToken = watchDir.name
+
+        val parentLoader = EmbeddedServerReloadingTests::class.java.classLoader
+        val reloadClassLoader = URLClassLoader(arrayOf(watchDir.toURI().toURL()), parentLoader)
+
+        assertTrue(
+            checkUrlMatches(watchDir.toURI().toURL(), watchToken),
+            "Watch token must match the temp directory URL"
+        )
+        assertTrue(reloadClassLoader.urLs.toList().any { checkUrlMatches(it, watchToken) })
+
+        var generation = 0
+        var appShouldFailToStart = false
+        val lifecycle = mutableListOf<AppEvent>()
+
+        val environment = applicationEnvironment {
+            classLoader = reloadClassLoader
+            log = NOPLogger.NOP_LOGGER
+            config = HoconApplicationConfig(
+                ConfigFactory.parseMap(
+                    mapOf("ktor.deployment.watch" to listOf(watchToken))
+                )
+            )
+        }
+
+        val props = serverConfig(environment) {
+            developmentMode = true
+            watchPaths = listOf(watchToken)
+            module {
+                val current = ++generation
+                attributes.put(TestKey, "gen-$current")
+                if (appShouldFailToStart) {
+                    error("Simulated auto-reload failure for generation $current")
+                }
+            }
+        }
+        val server = EmbeddedServer(props, DummyEngineFactory).apply {
+            monitor.subscribe(ApplicationStarting) { lifecycle += AppEvent(app = it, type = AppEvent.Type.Starting) }
+            monitor.subscribe(ApplicationStopping) { lifecycle += AppEvent(app = it, type = AppEvent.Type.Stopping) }
+            monitor.subscribe(ApplicationStopped) { lifecycle += AppEvent(app = it, type = AppEvent.Type.Stopped) }
+        }
+
+        try {
+            server.start()
+            val firstApp = server.application
+            assertEquals("gen-1", firstApp.attributes[TestKey])
+            assertEquals(1, generation)
+
+            appShouldFailToStart = true
+            marker.writeText("change-1-${System.nanoTime()}")
+            awaitUntil {
+                server.probeApplication()
+                generation > 1
+            }
+            assertEquals(2, generation)
+            assertFalse(firstApp.isActive)
+
+            val stoppedIndex = lifecycle.indexOfFirst { it.type == AppEvent.Type.Stopped && it.app === firstApp }
+            val failedStartingIndex = lifecycle.indexOfFirst {
+                it.type == AppEvent.Type.Starting && it.app !== firstApp
+            }
+            assertTrue(
+                stoppedIndex in 0..<failedStartingIndex,
+                "Expected no application overlap on failed auto-reload: $lifecycle"
+            )
+
+            val failedApp = lifecycle[failedStartingIndex].app
+            assertEquals(
+                1,
+                lifecycle.count { it.type == AppEvent.Type.Stopping && it.app === failedApp },
+                "Failed partial generation should be cleaned exactly once: $lifecycle"
+            )
+
+            assertFailsWith<IllegalStateException> { server.application }
+            assertEquals(2, generation, "Must not retry creation without another file change")
+
+            appShouldFailToStart = false
+            marker.writeText("change-2-${System.nanoTime()}")
+            awaitUntil {
+                server.probeApplication()
+                generation > 2
+            }
+
+            assertEquals("gen-3", server.application.attributes[TestKey])
+            assertEquals(3, generation)
+            assertTrue(server.application.isActive)
+        } finally {
+            server.stop()
+            reloadClassLoader.close()
+            watchDir.deleteRecursively()
+        }
+    }
+
+    // Triggers change detection via application lookup; ignores failures while none is loaded.
+    private fun EmbeddedServer<*, *>.probeApplication() {
+        runCatching { application }
+    }
+
+    private fun awaitUntil(timeout: Duration = 10.seconds, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeout.inWholeMilliseconds
+        while (!condition()) {
+            check(System.currentTimeMillis() < deadline) { "Timed out waiting for condition" }
+            Thread.sleep(100)
+        }
+    }
+
+    @Test
     fun `application is available before environment start`() {
         val env = dummyEnv()
-        val props = applicationProperties(env)
+        val props = serverConfig(env)
         val server = EmbeddedServer(props, DummyEngineFactory)
         val app = server.application
         server.start()
@@ -552,7 +806,7 @@ class EmbeddedServerReloadingTests {
     @Test
     fun `completion handler is invoked when attached before environment start`() {
         val env = dummyEnv()
-        val props = applicationProperties(env)
+        val props = serverConfig(env)
         val server = EmbeddedServer(props, DummyEngineFactory)
         val job = server.application.coroutineContext[Job]!!
 
@@ -571,7 +825,7 @@ class EmbeddedServerReloadingTests {
 
     @Test
     fun `interceptor is invoked when added before environment start`() {
-        val server = EmbeddedServer(applicationProperties(), TestEngine) {}
+        val server = EmbeddedServer(serverConfig(), TestEngine) {}
         val engine = server.engine
         server.application.intercept(ApplicationCallPipeline.Plugins) {
             call.response.header("Custom", "Value")
@@ -585,7 +839,8 @@ class EmbeddedServerReloadingTests {
                 }
             }
 
-            assertEquals("Value", engine.handleRequest(HttpMethod.Get, "/").response.headers["Custom"])
+            val response = runBlocking { engine.client.get("/") }
+            assertEquals("Value", response.headers["Custom"])
         } catch (cause: Throwable) {
             fail("Failed with an exception: ${cause.message}")
         } finally {
@@ -633,6 +888,11 @@ fun Application.topLevelExtensionFunction() {
     attributes.put(EmbeddedServerReloadingTests.TestKey, "topLevelExtensionFunction")
 }
 
+suspend fun Application.topLevelSuspendExtensionFunction() {
+    delay(0.milliseconds)
+    attributes.put(EmbeddedServerReloadingTests.TestKey2, "topLevelSuspendExtensionFunction")
+}
+
 fun topLevelFunction(app: Application) {
     app.attributes.put(EmbeddedServerReloadingTests.TestKey, "topLevelFunction")
 }
@@ -642,8 +902,19 @@ fun topLevelFunction() {
     error("Shouldn't be invoked")
 }
 
-fun Application.topLevelWithDefaultArg(testing: Boolean = false) {
-    attributes.put(EmbeddedServerReloadingTests.TestKey, "topLevelWithDefaultArg")
+fun Application.defaultArgBoolean(testing: Boolean = false) {
+    addLoadedModule("defaultArgBoolean")
+}
+
+fun Application.defaultArgContainingApplicationWord(configure: Application.() -> Unit = {}) {
+    addLoadedModule("defaultArgContainingApplicationWord")
+}
+
+@JvmInline
+value class InstanceId(val value: String)
+
+fun Application.defaultArgInline(id: InstanceId = InstanceId("default")) {
+    addLoadedModule("defaultArgInline")
 }
 
 @JvmOverloads

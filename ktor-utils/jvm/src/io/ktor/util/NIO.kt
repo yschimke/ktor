@@ -1,15 +1,17 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.util
 
 import io.ktor.utils.io.pool.*
-import java.nio.*
-import java.nio.charset.*
+import java.nio.ByteBuffer
+import java.nio.charset.Charset
 
 /**
  * Moves bytes from `this` buffer to the [destination] buffer
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.moveTo)
  *
  * @param destination is the buffer to copy bytes to
  * @param limit is an optional parameter specifying maximum number of bytes to be moved
@@ -30,6 +32,8 @@ public fun ByteBuffer.moveTo(destination: ByteBuffer, limit: Int = Int.MAX_VALUE
 
 /**
  * Moves bytes from `this` buffer into newly created [ByteArray] and returns it
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.moveToByteArray)
  */
 public fun ByteBuffer.moveToByteArray(): ByteArray {
     val array = ByteArray(remaining())
@@ -39,6 +43,8 @@ public fun ByteBuffer.moveToByteArray(): ByteArray {
 
 /**
  * Decodes a string from `this` buffer with the specified [charset]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.decodeString)
  */
 public fun ByteBuffer.decodeString(charset: Charset = Charsets.UTF_8): String {
     return charset.decode(this).toString()
@@ -46,6 +52,8 @@ public fun ByteBuffer.decodeString(charset: Charset = Charsets.UTF_8): String {
 
 /**
  * Moves all bytes in `this` buffer to a newly created buffer with the optionally specified [size]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.copy)
  */
 public fun ByteBuffer.copy(size: Int = remaining()): ByteBuffer {
     return ByteBuffer.allocate(size).apply {
@@ -56,6 +64,8 @@ public fun ByteBuffer.copy(size: Int = remaining()): ByteBuffer {
 
 /**
  * Moves all bytes in `this` buffer to a newly created buffer with the optionally specified [size] by allocating it from the given [pool]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.copy)
  */
 public fun ByteBuffer.copy(pool: ObjectPool<ByteBuffer>, size: Int = remaining()): ByteBuffer = pool.borrow().apply {
     limit(size)

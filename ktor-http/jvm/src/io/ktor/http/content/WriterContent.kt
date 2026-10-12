@@ -5,12 +5,13 @@
 package io.ktor.http.content
 
 import io.ktor.http.*
-import io.ktor.util.cio.*
 import io.ktor.utils.io.*
-import java.io.*
+import java.io.Writer
 
 /**
  * Represents a content that is produced by [body] function
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.content.WriterContent)
  */
 public class WriterContent(
     private val body: suspend Writer.() -> Unit,
@@ -21,10 +22,6 @@ public class WriterContent(
 
     override suspend fun writeTo(channel: ByteWriteChannel) {
         val charset = contentType.charset() ?: Charsets.UTF_8
-        withBlocking {
-            channel.writer(charset).use {
-                it.body()
-            }
-        }
+        channel.withBlockingWriter(charset, block = body)
     }
 }

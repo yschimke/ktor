@@ -1,6 +1,6 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.http.cio
 
@@ -10,6 +10,8 @@ import io.ktor.utils.io.*
 
 /**
  * An HTTP parser exception
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.ParserException)
  */
 public class ParserException(message: String) : IllegalStateException(message)
 
@@ -19,7 +21,20 @@ private const val HTTP_STATUS_CODE_MAX_RANGE = 999
 private val hostForbiddenSymbols = setOf('/', '?', '#', '@')
 
 /**
+ * Line endings allowed as a separator for HTTP fields and start line.
+ *
+ * "Although the line terminator for the start-line and fields is the sequence CRLF,
+ * a recipient MAY recognize a single LF as a line terminator and ignore any preceding CR."
+ * https://datatracker.ietf.org/doc/html/rfc9112#section-2.2-3
+ */
+@OptIn(InternalAPI::class)
+@Suppress("DEPRECATION")
+internal val httpLineEndings: LineEndingMode = LineEndingMode.CRLF + LineEndingMode.LF
+
+/**
  * Parse an HTTP request line and headers
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.parseRequest)
  */
 public suspend fun parseRequest(input: ByteReadChannel): Request? {
     val builder = CharArrayBuilder()
@@ -27,7 +42,7 @@ public suspend fun parseRequest(input: ByteReadChannel): Request? {
 
     try {
         while (true) {
-            if (!input.readUTF8LineTo(builder, HTTP_LINE_LIMIT)) return null
+            if (input.readLineStrictTo(builder, HTTP_LINE_LIMIT.toLong()) == -1L) return null
             range.end = builder.length
             if (range.start == range.end) continue
 
@@ -54,13 +69,15 @@ public suspend fun parseRequest(input: ByteReadChannel): Request? {
 
 /**
  * Parse an HTTP response status line and headers
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.parseResponse)
  */
 public suspend fun parseResponse(input: ByteReadChannel): Response? {
     val builder = CharArrayBuilder()
     val range = MutableRange(0, 0)
 
     try {
-        if (!input.readUTF8LineTo(builder, HTTP_LINE_LIMIT)) return null
+        if (input.readLineStrictTo(builder, HTTP_LINE_LIMIT.toLong()) == -1L) return null
         range.end = builder.length
 
         val version = parseVersion(builder, range)
@@ -80,6 +97,8 @@ public suspend fun parseResponse(input: ByteReadChannel): Response? {
 
 /**
  * Parse http headers. Not applicable to request and response status lines.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.cio.parseHeaders)
  */
 public suspend fun parseHeaders(input: ByteReadChannel): HttpHeadersMap {
     val builder = CharArrayBuilder()
@@ -98,7 +117,7 @@ internal suspend fun parseHeaders(
 
     try {
         while (true) {
-            if (!input.readUTF8LineTo(builder, HTTP_LINE_LIMIT)) {
+            if (input.readLineStrictTo(builder, HTTP_LINE_LIMIT.toLong()) == -1L) {
                 headers.release()
                 return null
             }
@@ -111,18 +130,14 @@ internal suspend fun parseHeaders(
 
             val nameStart = range.start
             val nameEnd = parseHeaderName(builder, range)
-
-            val nameHash = builder.hashCodeLowerCase(nameStart, nameEnd)
-
             val headerEnd = range.end
             parseHeaderValue(builder, range)
 
             val valueStart = range.start
             val valueEnd = range.end
-            val valueHash = builder.hashCodeLowerCase(valueStart, valueEnd)
             range.start = headerEnd
 
-            headers.put(nameHash, valueHash, nameStart, nameEnd, valueStart, valueEnd)
+            headers.put(nameStart, nameEnd, valueStart, valueEnd)
         }
 
         val host = headers[HttpHeaders.Host]
@@ -276,8 +291,7 @@ internal fun parseHeaderValue(text: CharArrayBuilder, range: MutableRange) {
 
     while (index < end) {
         when (val ch = text[index]) {
-            HTAB, ' ' -> {
-            }
+            HTAB, ' ' -> {}
             '\r', '\n' -> characterIsNotAllowed(text, ch)
             else -> valueLastIndex = index
         }

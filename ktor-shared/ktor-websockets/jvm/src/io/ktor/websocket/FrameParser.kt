@@ -7,7 +7,6 @@ package io.ktor.websocket
 import java.nio.*
 import java.util.concurrent.atomic.*
 
-@Suppress("KDocMissingDocumentation", "UsePropertyAccessSyntax")
 public class FrameParser {
     private val state = AtomicReference(State.HEADER0)
 
@@ -38,7 +37,8 @@ public class FrameParser {
         private set
 
     public val frameType: FrameType
-        get() = FrameType[opcode] ?: throw IllegalStateException("Unsupported opcode ${Integer.toHexString(opcode)}")
+        get() = FrameType[opcode]
+            ?: throw ProtocolViolationException("Unsupported opcode ${Integer.toHexString(opcode)}")
 
     public enum class State {
         HEADER0,
@@ -106,8 +106,10 @@ public class FrameParser {
         mask = maskAndLength1 and 0x80 != 0
         val length1 = maskAndLength1 and 0x7f
 
-        if (frameType.controlFrame && length1 > 125) {
-            throw ProtocolViolationException("control frames can't be larger than 125 bytes")
+        if (frameType.controlFrame && length1 > MAX_CONTROL_FRAME_PAYLOAD_SIZE) {
+            throw ProtocolViolationException(
+                "control frames can't be larger than $MAX_CONTROL_FRAME_PAYLOAD_SIZE bytes"
+            )
         }
 
         lengthLength = when (length1) {

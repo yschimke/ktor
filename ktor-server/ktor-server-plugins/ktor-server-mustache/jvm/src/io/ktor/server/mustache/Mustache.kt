@@ -1,19 +1,22 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.mustache
 
-import com.github.mustachejava.*
+import com.github.mustachejava.DefaultMustacheFactory
+import com.github.mustachejava.MustacheFactory
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.application.*
 import io.ktor.server.application.hooks.*
 import io.ktor.utils.io.*
-import java.io.*
+import java.io.StringWriter
 
 /**
  * A response content handled by the [Mustache] plugin.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.mustache.MustacheContent)
  *
  * @param template name that is resolved by Mustache
  * @param model to be passed during template rendering
@@ -36,6 +39,8 @@ public class MustacheConfig {
  * A plugin that allows you to use Mustache templates as views within your application.
  * Provides the ability to respond with [MustacheContent].
  * You can learn more from [Mustache](https://ktor.io/docs/mustache.html).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.mustache.Mustache)
  */
 public val Mustache: ApplicationPlugin<MustacheConfig> = createApplicationPlugin("Mustache", ::MustacheConfig) {
     val mustacheFactory = pluginConfig.mustacheFactory

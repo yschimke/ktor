@@ -1,11 +1,10 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.tests.utils
 
 import io.ktor.client.plugins.logging.*
-import kotlin.test.*
 
 /**
  * Test logger that provides ability to verify it's content after test.
@@ -16,7 +15,7 @@ import kotlin.test.*
  * - "!!!" the log entry is flaky: it's required, but it's content is changing
  * - "+++" the log entry is required but the exact place is not known
  */
-@Suppress("DEPRECATION")
+
 internal class TestLogger(
     private val dumpOnly: Boolean = false,
     block: LoggerDsl.() -> Unit

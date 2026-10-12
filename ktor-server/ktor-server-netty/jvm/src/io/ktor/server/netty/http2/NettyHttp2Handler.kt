@@ -1,39 +1,53 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.server.netty.http2
 
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
+import io.ktor.server.http.*
 import io.ktor.server.netty.*
+import io.ktor.server.netty.NettyApplicationCallHandler.CallHandlerCoroutineName
 import io.ktor.server.netty.cio.*
 import io.ktor.server.response.*
-import io.netty.channel.*
+import io.ktor.util.pipeline.*
+import io.ktor.utils.io.*
+import io.netty.channel.ChannelHandler
+import io.netty.channel.ChannelHandlerContext
+import io.netty.channel.ChannelInboundHandlerAdapter
 import io.netty.handler.codec.http2.*
-import io.netty.util.*
-import io.netty.util.concurrent.*
+import io.netty.util.AttributeKey
+import io.netty.util.ReferenceCountUtil
+import io.netty.util.concurrent.EventExecutor
 import kotlinx.coroutines.*
-import java.lang.reflect.*
-import java.nio.channels.*
-import kotlin.coroutines.*
+import java.lang.reflect.Field
+import java.nio.channels.ClosedChannelException
+import kotlin.coroutines.CoroutineContext
 
 @ChannelHandler.Sharable
 internal class NettyHttp2Handler(
     private val enginePipeline: EnginePipeline,
     private val application: Application,
-    private val callEventGroup: EventExecutorGroup,
+    private val resolveCallExecutor: (ChannelHandlerContext) -> EventExecutor,
     private val userCoroutineContext: CoroutineContext,
     runningLimit: Int
-) : ChannelInboundHandlerAdapter(), CoroutineScope {
-    private val handlerJob = SupervisorJob(userCoroutineContext[Job])
+) : ChannelInboundHandlerAdapter() {
+    // Parent [Job] for per-call [Job]s. Cached to avoid re-running `userCoroutineContext[Job]` per request.
+    private val parentJob: Job? = userCoroutineContext[Job]
+
+    private val handlerJob = SupervisorJob(parentJob)
+
+    // Connection-stable portion of the per-call coroutine context. Cached at construction so each
+    // request only needs to combine it with the per-stream dispatcher and the per-call [Job].
+    private val staticCallContext: CoroutineContext = userCoroutineContext + CallHandlerCoroutineName
+
+    // Engine context exposed on the [NettyHttp2ApplicationCall]. Constant per handler instance.
+    private val callEngineContext: CoroutineContext = handlerJob + Dispatchers.Unconfined
 
     private val state = NettyHttpHandlerState(runningLimit)
     private lateinit var responseWriter: NettyHttpResponsePipeline
-
-    override val coroutineContext: CoroutineContext
-        get() = handlerJob
 
     override fun channelRead(context: ChannelHandlerContext, message: Any) {
         when (message) {
@@ -41,7 +55,14 @@ internal class NettyHttp2Handler(
                 state.isChannelReadCompleted.compareAndSet(expect = true, update = false)
                 state.activeRequests.incrementAndGet()
                 startHttp2(context, message.headers())
+                if (message.isEndStream) {
+                    context.applicationCall?.request?.apply {
+                        contentActor.close()
+                        state.isCurrentRequestFullyRead.compareAndSet(expect = false, update = true)
+                    }
+                }
             }
+
             is Http2DataFrame -> {
                 context.applicationCall?.request?.apply {
                     val eof = message.isEndStream
@@ -54,27 +75,48 @@ internal class NettyHttp2Handler(
                     }
                 } ?: message.release()
             }
+
             is Http2ResetFrame -> {
                 context.applicationCall?.request?.let { r ->
                     val e = if (message.errorCode() == 0L) null else Http2ClosedChannelException(message.errorCode())
                     r.contentActor.close(e)
                 }
             }
+
             else -> context.fireChannelRead(message)
         }
     }
 
     override fun channelActive(context: ChannelHandlerContext) {
         responseWriter = NettyHttpResponsePipeline(
-            context,
-            state,
-            coroutineContext
+            context = context,
+            httpHandlerState = state,
+            coroutineContext = handlerJob,
+            onFailure = { responseWriter.flushIfNeeded() }
         )
 
-        context.pipeline()?.apply {
-            addLast(callEventGroup, NettyApplicationCallHandler(userCoroutineContext, enginePipeline))
+        // Append a tail sink that consumes NettyHttp2ApplicationCall messages forwarded by this handler
+        // via fireChannelRead(call). This prevents Netty's tail handler from logging
+        // "Discarded inbound message" warnings for calls that pass through any user-added
+        // channelPipelineConfig handlers. The call lifecycle is driven by startHttp2, so the sink
+        // only needs to drop the call without further action.
+        if (context.pipeline().get(NettyHttp2ApplicationCallSink::class.java) == null) {
+            context.pipeline().addLast(NettyHttp2ApplicationCallSink)
         }
         context.fireChannelActive()
+    }
+
+    override fun channelInactive(context: ChannelHandlerContext) {
+        onStreamClose(context)
+        context.fireChannelInactive()
+    }
+
+    private fun onStreamClose(context: ChannelHandlerContext) {
+        context.applicationCall?.let { call ->
+            context.applicationCall = null
+            @OptIn(InternalAPI::class)
+            call.attributes.getOrNull(HttpRequestCloseHandlerKey)?.invoke()
+        }
     }
 
     override fun channelReadComplete(context: ChannelHandlerContext) {
@@ -89,21 +131,49 @@ internal class NettyHttp2Handler(
     }
 
     private fun startHttp2(context: ChannelHandlerContext, headers: Http2Headers) {
+        val callJob = Job(parent = handlerJob)
+        val callExecutor = resolveCallExecutor(context)
+        // Combine the cached static context with the per-stream dispatcher and per-call [Job] only.
+        val callContext = staticCallContext +
+            NettyDispatcher.CurrentContext(context, callExecutor) +
+            callJob
         val call = NettyHttp2ApplicationCall(
-            application,
-            context,
-            headers,
-            this,
-            handlerJob + Dispatchers.Unconfined,
-            userCoroutineContext
+            application = application,
+            context = context,
+            headers = headers,
+            handler = this@NettyHttp2Handler,
+            engineContext = callEngineContext,
+            coroutineContext = callContext
         )
         context.applicationCall = call
 
+        // Fire channel read for custom handlers added to the pipeline
         context.fireChannelRead(call)
+
+        // Reserve response slot synchronously on the I/O thread for proper ordering
         responseWriter.processResponse(call)
+
+        // Defer coroutine start to the next event loop tick so that channelRead returns and Netty can
+        // deliver subsequent Http2DataFrame messages. Without this, the coroutine runs on the event loop,
+        // blocking data frame delivery and causing EOFException.
+        // Dispatching to the call executor also ensures user handler code does not run on the I/O worker
+        // event loop. When resolveCallExecutor is pinned directly to context.executor() (shareWorkGroup),
+        // calls that never suspend skip that hop entirely and run on the I/O thread instead; calls that do
+        // suspend still resume on that same thread via NettyDispatcher.
+        callExecutor.execute {
+            val callScope = CoroutineScope(context = callContext)
+            callScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    enginePipeline.execute(call)
+                } catch (error: Throwable) {
+                    handleFailure(call, error)
+                } finally {
+                    callJob.complete()
+                }
+            }
+        }
     }
 
-    @Suppress("DEPRECATION")
     @UseHttp2Push
     internal fun startHttp2PushPromise(context: ChannelHandlerContext, builder: ResponsePushBuilder) {
         val channel = context.channel() as Http2StreamChannel
@@ -161,7 +231,7 @@ internal class NettyHttp2Handler(
         try {
             Http2FrameCodec::class.javaObjectType.getDeclaredField("streamKey")
                 .also { it.isAccessible = true }
-        } catch (cause: Throwable) {
+        } catch (_: Throwable) {
             null
         }
     }
@@ -175,7 +245,7 @@ internal class NettyHttp2Handler(
 
         try {
             function.invoke(this, streamKey, childStream)
-        } catch (cause: Throwable) {
+        } catch (_: Throwable) {
             return false
         }
 
@@ -188,7 +258,7 @@ internal class NettyHttp2Handler(
     private tailrec fun Class<*>.findIdField(): Field {
         val idField = try {
             getDeclaredField("id")
-        } catch (t: NoSuchFieldException) {
+        } catch (_: NoSuchFieldException) {
             null
         }
         if (idField != null) {
@@ -212,13 +282,52 @@ internal class NettyHttp2Handler(
         }
     }
 
+    internal fun onConnectionClose() {
+        handlerJob.complete()
+    }
+
     companion object {
-        private val ApplicationCallKey = AttributeKey.newInstance<NettyHttp2ApplicationCall>("ktor.ApplicationCall")
+        private val ApplicationCallKey = AttributeKey.valueOf<NettyHttp2ApplicationCall>("ktor.ApplicationCall")
 
         private var ChannelHandlerContext.applicationCall: NettyHttp2ApplicationCall?
             get() = channel().attr(ApplicationCallKey).get()
             set(newValue) {
                 channel().attr(ApplicationCallKey).set(newValue)
             }
+    }
+}
+
+/**
+ * A no-op tail handler that swallows [NettyHttp2ApplicationCall] messages forwarded by
+ * [NettyHttp2Handler.startHttp2] via [ChannelHandlerContext.fireChannelRead]. Its sole purpose is to
+ * prevent Netty's default tail handler from logging a "Discarded inbound message ... at the tail of the
+ * pipeline" warning. Non-call messages are propagated unchanged so they can reach Netty's tail and be
+ * released/handled normally.
+ */
+@ChannelHandler.Sharable
+internal object NettyHttp2ApplicationCallSink : ChannelInboundHandlerAdapter() {
+    override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
+        if (msg is NettyHttp2ApplicationCall) return
+        ctx.fireChannelRead(msg)
+    }
+}
+
+/**
+ * A no-op tail handler installed on the HTTP/2 *connection* (parent) pipeline that swallows
+ * connection-level [Http2Frame] messages (e.g. SETTINGS, PING, GOAWAY) which Netty's
+ * [Http2MultiplexCodec] forwards down the parent pipeline after handling them.
+ *
+ * Without this sink, those frames reach Netty's default tail handler and trigger
+ * "Discarded inbound message ... at the tail of the pipeline" warnings. Non-frame messages are
+ * propagated unchanged so they can reach Netty's tail and be released/handled normally.
+ */
+@ChannelHandler.Sharable
+internal object NettyHttp2ConnectionSink : ChannelInboundHandlerAdapter() {
+    override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
+        if (msg is Http2Frame) {
+            ReferenceCountUtil.release(msg)
+            return
+        }
+        ctx.fireChannelRead(msg)
     }
 }

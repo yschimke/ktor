@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.testing
@@ -15,19 +15,8 @@ import kotlinx.coroutines.channels.*
  * Makes a test request that sets up a WebSocket session and invokes the [callback] function
  * that handles conversation with the server
  */
-public fun TestApplicationEngine.handleWebSocketConversation(
-    uri: String,
-    setup: TestApplicationRequest.() -> Unit = {},
-    awaitCallback: Boolean = true,
-    callback: suspend TestApplicationCall.(incoming: ReceiveChannel<Frame>, outgoing: SendChannel<Frame>) -> Unit
-): TestApplicationCall {
-    return runBlocking {
-        handleWebSocketConversationNonBlocking(uri, setup, awaitCallback, callback)
-    }
-}
-
 @OptIn(DelicateCoroutinesApi::class)
-internal suspend fun TestApplicationEngine.handleWebSocketConversationNonBlocking(
+internal suspend fun TestApplicationEngine.handleWebSocketConversation(
     uri: String,
     setup: TestApplicationRequest.() -> Unit = {},
     awaitCallback: Boolean = true,
@@ -74,10 +63,17 @@ internal suspend fun TestApplicationEngine.handleWebSocketConversationNonBlockin
             throw IllegalStateException("WebSocket connection failed")
         }
 
-        val writer = WebSocketWriter(websocketChannel, webSocketContext, pool = pool)
+        val writer =
+            WebSocketWriter(websocketChannel, webSocketContext, pool = pool, queueConfig = ChannelConfig.UNLIMITED)
         val responseChannel = call.response.websocketChannel()
             ?: error("Expected websocket channel in the established connection")
-        val reader = WebSocketReader(responseChannel, webSocketContext, Int.MAX_VALUE.toLong(), pool)
+        val reader = WebSocketReader(
+            responseChannel,
+            webSocketContext,
+            Int.MAX_VALUE.toLong(),
+            pool,
+            queueConfig = ChannelConfig.UNLIMITED
+        )
 
         val scope = if (awaitCallback) this else GlobalScope
         scope.launch {

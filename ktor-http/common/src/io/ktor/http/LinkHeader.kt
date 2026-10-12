@@ -6,13 +6,13 @@ package io.ktor.http
 
 /**
  * Represents a `Link` header value as per RFC 5988
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.LinkHeader)
  */
 public class LinkHeader(
     uri: String,
     params: List<HeaderValueParam>
 ) : HeaderValueWithParameters("<$uri>", params) {
-
-    @Suppress("unused")
     public constructor(uri: String, rel: String) : this(uri, listOf(HeaderValueParam(Parameters.Rel, rel)))
 
     public constructor(uri: String, vararg rel: String) : this(
@@ -20,7 +20,6 @@ public class LinkHeader(
         listOf(HeaderValueParam(Parameters.Rel, rel.joinToString(" ")))
     )
 
-    @Suppress("unused")
     public constructor(
         uri: String,
         rel: List<String>,
@@ -35,14 +34,18 @@ public class LinkHeader(
 
     /**
      * Link URI part
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.LinkHeader.uri)
      */
     public val uri: String
         get() = content.removePrefix("<").removeSuffix(">")
 
     /**
      * Known Link header parameters
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.LinkHeader.Parameters)
      */
-    @Suppress("unused", "KDocMissingDocumentation", "PublicApiImplicitType")
+    @Suppress("KDocMissingDocumentation", "ConstPropertyName")
     public object Parameters {
         public const val Rel: String = "rel"
         public const val Anchor: String = "anchor"
@@ -55,8 +58,10 @@ public class LinkHeader(
 
     /**
      * Known rel parameter values
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.LinkHeader.Rel)
      */
-    @Suppress("unused", "KDocMissingDocumentation", "PublicApiImplicitType")
+    @Suppress("KDocMissingDocumentation", "ConstPropertyName")
     public object Rel {
         public const val Stylesheet: String = "stylesheet"
 

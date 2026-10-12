@@ -1,0 +1,364 @@
+/*
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
+import io.ktor.test.*
+import io.ktor.utils.io.*
+import io.ktor.utils.io.core.*
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
+import kotlinx.io.IOException
+import kotlinx.io.InternalIoApi
+import kotlinx.io.bytestring.ByteString
+import kotlinx.io.bytestring.encodeToByteString
+import kotlinx.io.readByteArray
+import kotlinx.io.writeString
+import kotlin.test.*
+import kotlin.time.Duration.Companion.seconds
+
+class ByteReadChannelOperationsTest {
+
+    @Test
+    fun testReadPacketBig() = runTest {
+        val channel = ByteChannel()
+        launch {
+            channel.writeByteArray(ByteArray(8192))
+            channel.writeByteArray(ByteArray(8192))
+            channel.flush()
+        }
+        val packet = channel.readPacket(8192 * 2)
+        assertEquals(8192 * 2, packet.remaining)
+        packet.close()
+    }
+
+    @Test
+    fun testReadBuffer() = runTest {
+        val packet = buildPacket {
+            writeInt(1)
+            writeInt(2)
+            writeInt(3)
+        }
+        val channel = ByteChannel()
+        channel.writePacket(packet)
+        channel.flushAndClose()
+        val first = channel.readBuffer()
+        assertEquals(12, first.remaining)
+        first.close()
+        val second = channel.readBuffer()
+        assertEquals(0, second.remaining)
+    }
+
+    @Test
+    fun testReadToSinkAll() = runTest {
+        val channel = ByteChannel()
+        val data = byteArrayOf(1, 2, 3, 4, 5)
+        channel.writeFully(data)
+        channel.flushAndClose()
+        val sink = kotlinx.io.Buffer()
+        val fullReadCount = channel.readTo(sink)
+        assertEquals(5, fullReadCount)
+        assertEquals(5, sink.remaining)
+        assertContentEquals(data, sink.readByteArray())
+        val emptyReadCount = channel.readTo(sink)
+        assertEquals(0, emptyReadCount)
+        assertEquals(0, sink.remaining)
+    }
+
+    @Test
+    fun testReadToSinkPartial() = runTest {
+        val channel = ByteChannel()
+        val data = ByteArray(10) { it.toByte() }
+        channel.writeFully(data)
+        channel.flushAndClose()
+
+        var bytesRead = 0
+        val sink = kotlinx.io.Buffer()
+        for (chunkSize in listOf<Long>(2, 2, 5, 1)) {
+            val readCount = channel.readTo(sink, limit = chunkSize).toInt()
+            assertEquals(chunkSize, sink.remaining)
+            assertContentEquals(
+                ByteArray(chunkSize.toInt()) { (bytesRead + it).toByte() },
+                sink.readByteArray()
+            )
+            bytesRead += readCount
+        }
+        val sink2 = kotlinx.io.Buffer().also { channel.readTo(it) }
+        assertEquals(0, sink2.remaining)
+    }
+
+    @Test
+    fun testReadToFromCancelled() = runTest {
+        val channel = ByteChannel()
+        channel.writeFully(byteArrayOf(1, 2, 3))
+        channel.flush()
+        channel.cancel()
+        assertFailsWith<IOException> {
+            channel.readTo(kotlinx.io.Buffer())
+        }
+        assertTrue(channel.isClosedForRead)
+    }
+
+    @Test
+    fun testReadBufferFromCancelled() = runTest {
+        val packet = buildPacket {
+            writeInt(1)
+            writeInt(2)
+            writeInt(3)
+        }
+        val channel = ByteChannel()
+        channel.writePacket(packet)
+        channel.flush()
+        channel.cancel()
+        assertFailsWith<IOException> {
+            channel.readBuffer()
+        }
+    }
+
+    @Test
+    fun `copyTo propagates closedCause cancelled mid-await`() = runTest {
+        val src = ByteChannel()
+        val dst = ByteChannel()
+        launch {
+            yield()
+            src.cancel(IOException("source cancelled"))
+        }
+        assertFailsWith<IOException> {
+            src.copyTo(dst)
+        }
+        assertTrue(src.isClosedForRead)
+    }
+
+    @Test
+    fun `copyTo with limit propagates closedCause cancelled mid-await`() = runTest {
+        val src = ByteChannel()
+        val dst = ByteChannel()
+        launch {
+            yield()
+            src.cancel(IOException("source cancelled"))
+        }
+        assertFailsWith<IOException> {
+            src.copyTo(dst, limit = 1024L)
+        }
+        assertTrue(src.isClosedForRead)
+    }
+
+    @Test
+    fun `copyTo does not throw on normal close`() = runTest {
+        val src = ByteChannel()
+        val dst = ByteChannel()
+        src.writeFully(byteArrayOf(1, 2, 3))
+        src.flushAndClose()
+        val copied = src.copyTo(dst)
+        assertEquals(3, copied)
+    }
+
+    @Test
+    fun `awaitContent rethrows closedCause after suspension`() = runTest {
+        val channel = ByteChannel()
+        launch {
+            yield()
+            channel.cancel(IOException("cancelled mid-await"))
+        }
+        assertFailsWith<IOException> {
+            channel.awaitContent()
+        }
+        assertTrue(channel.isClosedForRead)
+    }
+
+    @Test
+    fun readFully() = runTest {
+        val expected = ByteArray(10) { it.toByte() }
+        val actual = ByteArray(10)
+        val channel = ByteChannel()
+        channel.writeFully(expected)
+        channel.flush()
+        channel.readFully(actual)
+        assertContentEquals(expected, actual)
+        actual.fill(0)
+        channel.writeFully(expected, 0, 5)
+        channel.flush()
+        channel.readFully(actual, 3, 8)
+        assertContentEquals(ByteArray(3) { 0 }, actual.copyOfRange(0, 3))
+        assertContentEquals(expected.copyOfRange(0, 5), actual.copyOfRange(3, 8))
+        assertContentEquals(ByteArray(2) { 0 }, actual.copyOfRange(8, 10))
+    }
+
+    @Test
+    fun skip() = runTest {
+        val channel = ByteChannel()
+        channel.writeFully(byteArrayOf(1, 2, 3))
+        channel.close()
+        val delimiter = ByteString(byteArrayOf(1, 2))
+        assertTrue(channel.skipIfFound(delimiter))
+        assertEquals(3, channel.readByte())
+        assertTrue(channel.isClosedForRead)
+    }
+
+    @Test
+    fun skipExact() = runTest {
+        val channel = ByteChannel()
+        channel.writeFully(byteArrayOf(1, 2))
+        channel.close()
+        val delimiter = ByteString(byteArrayOf(1, 2))
+        assertTrue(channel.skipIfFound(delimiter))
+        assertTrue(channel.isClosedForRead)
+    }
+
+    @Test
+    fun skipInvalid() = runTest {
+        val channel = ByteChannel()
+        channel.writeFully(byteArrayOf(9, 1, 2, 3))
+        channel.close()
+        val delimiter = ByteString(byteArrayOf(1, 2))
+        assertFalse(channel.skipIfFound(delimiter))
+    }
+
+    @Test
+    fun skipEndOfInput() = runTest {
+        val channel = ByteChannel()
+        channel.writeFully(byteArrayOf(1, 2))
+        channel.close()
+        val delimiter = ByteString(byteArrayOf(1, 2, 3))
+        assertFalse(channel.skipIfFound(delimiter))
+    }
+
+    @Test
+    fun skipDelayed() = runTest {
+        val channel = ByteChannel()
+        val writer = launch(CoroutineName("writer"), start = CoroutineStart.LAZY) {
+            channel.writeByte(2)
+            channel.writeByte(3)
+            channel.close()
+        }
+        channel.writeByte(1)
+        channel.flush()
+        writer.start()
+        val delimiter1 = ByteString(byteArrayOf(1, 2))
+        assertTrue(channel.skipIfFound(delimiter1))
+        assertEquals(3, channel.readByte())
+        assertTrue(channel.isClosedForRead)
+    }
+
+    @Test
+    fun skipDelayedInvalid() = runTest {
+        val channel = ByteChannel()
+        val writer = launch(CoroutineName("writer"), start = CoroutineStart.LAZY) {
+            channel.writeByte(3)
+            channel.writeByte(2)
+            channel.flush()
+        }
+        channel.writeByte(1)
+        channel.flush()
+        writer.start()
+        val delimiter = ByteString(byteArrayOf(1, 2))
+        assertFalse(channel.skipIfFound(delimiter))
+        assertEquals(1, channel.readByte())
+        channel.close()
+    }
+
+    @Test
+    fun readUntilEmpty() = runTest {
+        assertFailsWith<IllegalArgumentException> {
+            "test".toByteChannel().readUntil(ByteString(), ByteChannel())
+        }
+    }
+
+    @Test
+    fun readUntilSingle() = runTest {
+        val actual = ByteChannel().also { out ->
+            "test some more".toByteChannel().readUntil(ByteString('o'.code.toByte()), out)
+            out.close()
+        }.readBuffer().readText()
+        assertEquals("test s", actual)
+    }
+
+    @Test
+    fun readUntilSubstring() = runTest {
+        val testString = "This is a test--"
+        val delimiter = "--done"
+        val input = (testString + delimiter).toByteChannel()
+        val output = ByteChannel().also {
+            input.readUntil(delimiter.encodeToByteString(), it)
+            it.close()
+        }
+        assertEquals(testString, output.readBuffer().readText())
+    }
+
+    @Test
+    fun readUntil() = runTest {
+        val testString = """
+                There once was a stream of bytes, 
+                Flowing through many nights, 
+                With reading so keen, 
+                It stayed ever so lean, 
+                Parsing data in all sorts of lights.
+        """.trimIndent()
+        val delimiter = ", \n".encodeToByteString()
+        val input = testString.toByteChannel()
+        for (line in testString.lines()) {
+            val expected = line.trimEnd(',', ' ')
+            val expectedLength = expected.length.toLong()
+            val output = ByteChannel().also { out ->
+                assertEquals(expectedLength, input.readUntil(delimiter, out, ignoreMissing = true))
+                out.flushAndClose()
+            }
+            val actual = output.readBuffer().readText()
+            assertEquals(expected, actual)
+        }
+    }
+
+    @Test
+    fun readUntilStart() = runTest {
+        val input = "This is a test".toByteChannel()
+        val actual = writer {
+            input.readUntil("This".encodeToByteString(), channel, limit = 10, ignoreMissing = true)
+        }.channel.readBuffer().readText()
+        assertEquals("", actual)
+        assertEquals(" is a test", input.readBuffer().readText())
+    }
+
+    @Test
+    fun readUntilLimit() = runTest {
+        val input = "This is a test of the readUntil limit".toByteChannel()
+        assertFailsWith<IOException> {
+            input.readUntil("abc".encodeToByteString(), ByteChannel(), limit = 10, ignoreMissing = true)
+        }
+    }
+
+    @Test
+    fun readUntilMissing() = runTest {
+        val input = "It's not in here".toByteChannel()
+        assertFailsWith<IOException> {
+            input.readUntil("note".encodeToByteString(), ByteChannel())
+        }
+    }
+
+    @Test
+    fun skipIfFound() = runTest {
+        val input = "This is a test of the skipIfFound".toByteChannel()
+        assertFalse(input.skipIfFound("Won't find this".encodeToByteString()))
+        assertTrue(input.skipIfFound("This is a test of the ".encodeToByteString()))
+        assertEquals("skipIfFound", input.readLine())
+    }
+
+    // this test ensures we don't get stuck on awaitContent
+    @OptIn(InternalAPI::class, InternalIoApi::class)
+    @Test
+    fun readIntWithPartialContents() = runTest(timeout = 1.seconds) {
+        val channel = ByteChannel()
+        channel.readBuffer.buffer.writeByte(1)
+        channel.writeByte(1)
+        channel.writeByte(1)
+        channel.writeByte(1)
+        channel.flush()
+        assertEquals(16843009, channel.readInt())
+    }
+
+    @OptIn(InternalAPI::class)
+    private suspend fun String.toByteChannel() = ByteChannel().also {
+        it.writeBuffer.writeString(this)
+        it.flushAndClose()
+    }
+}

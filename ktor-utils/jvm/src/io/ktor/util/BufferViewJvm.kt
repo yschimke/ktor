@@ -5,17 +5,19 @@
 package io.ktor.util
 
 import io.ktor.utils.io.*
-import io.ktor.utils.io.core.*
 import io.ktor.utils.io.core.internal.*
+import kotlinx.io.*
 import java.nio.channels.*
 
 /**
  * Read from a NIO channel into the specified [buffer]
  * Could return `0` if the channel is non-blocking or [buffer] has no free space
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.read)
+ *
  * @return number of bytes read (possibly 0) or -1 if EOF
  */
-@Suppress("DEPRECATION")
-public fun ReadableByteChannel.read(buffer: ChunkBuffer): Int {
+public fun ReadableByteChannel.read(buffer: Buffer): Int {
     if (buffer.writeRemaining == 0) return 0
     var count = 0
 
@@ -29,11 +31,13 @@ public fun ReadableByteChannel.read(buffer: ChunkBuffer): Int {
 /**
  * Write bytes to a NIO channel from the specified [buffer]
  * Could return `0` if the channel is non-blocking or [buffer] has no free space
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.write)
+ *
  * @return number of bytes written (possibly 0)
  */
 @InternalAPI
-@Suppress("DEPRECATION")
-public fun WritableByteChannel.write(buffer: ChunkBuffer): Int {
+public fun WritableByteChannel.write(buffer: Buffer): Int {
     var count = 0
     buffer.readDirect { bb ->
         count = write(bb)

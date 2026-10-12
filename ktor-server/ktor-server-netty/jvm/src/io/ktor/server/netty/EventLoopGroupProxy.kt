@@ -10,53 +10,50 @@ import io.netty.channel.kqueue.*
 import io.netty.channel.nio.*
 import io.netty.channel.socket.*
 import io.netty.util.concurrent.*
-import java.lang.reflect.*
-import java.util.concurrent.*
+import java.util.Spliterator
+import java.util.function.Consumer
 import kotlin.reflect.*
 
 /**
  * Transparently allows for the creation of [EventLoopGroup]'s utilising the optimal implementation for
  * a given operating system, subject to availability, or falling back to [NioEventLoopGroup] if none is available.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.netty.EventLoopGroupProxy)
  */
 public class EventLoopGroupProxy(
     public val channel: KClass<out ServerSocketChannel>,
-    group: EventLoopGroup
+    private val group: EventLoopGroup
 ) : EventLoopGroup by group {
+    override fun ticker(): Ticker? {
+        return group.ticker()
+    }
+
+    override fun forEach(action: Consumer<in EventExecutor>) {
+        group.forEach(action)
+    }
+
+    override fun spliterator(): Spliterator<EventExecutor> {
+        return group.spliterator()
+    }
 
     public companion object {
 
         public fun create(parallelism: Int): EventLoopGroupProxy {
             val defaultFactory = DefaultThreadFactory(EventLoopGroupProxy::class.java, true)
-
-            val factory = ThreadFactory { runnable ->
-                defaultFactory.newThread {
-                    markParkingProhibited()
-                    runnable.run()
-                }
-            }
-
             val channelClass = getChannelClass()
 
             return when {
-                KQueue.isAvailable() -> EventLoopGroupProxy(channelClass, KQueueEventLoopGroup(parallelism, factory))
-                Epoll.isAvailable() -> EventLoopGroupProxy(channelClass, EpollEventLoopGroup(parallelism, factory))
-                else -> EventLoopGroupProxy(channelClass, NioEventLoopGroup(parallelism, factory))
-            }
-        }
+                KQueue.isAvailable() -> EventLoopGroupProxy(
+                    channelClass,
+                    KQueueEventLoopGroup(parallelism, defaultFactory)
+                )
 
-        private val prohibitParkingFunction: Method? by lazy {
-            try {
-                Class.forName("io.ktor.utils.io.jvm.javaio.PollersKt")
-                    .getMethod("prohibitParking")
-            } catch (cause: Throwable) {
-                null
-            }
-        }
+                Epoll.isAvailable() -> EventLoopGroupProxy(
+                    channelClass,
+                    EpollEventLoopGroup(parallelism, defaultFactory)
+                )
 
-        private fun markParkingProhibited() {
-            try {
-                prohibitParkingFunction?.invoke(null)
-            } catch (_: Throwable) {
+                else -> EventLoopGroupProxy(channelClass, NioEventLoopGroup(parallelism, defaultFactory))
             }
         }
     }

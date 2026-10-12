@@ -6,25 +6,29 @@ package io.ktor.network.tls
 
 import io.ktor.network.util.*
 import io.ktor.utils.io.core.*
-import java.security.*
+import kotlinx.io.Sink
+import kotlinx.io.Source
+import java.security.MessageDigest
 
 internal fun Digest(): Digest = Digest(BytePacketBuilder())
 
 @JvmInline
-internal value class Digest(val state: BytePacketBuilder) : Closeable {
+internal value class Digest(val state: Sink) : Closeable {
 
-    fun update(packet: ByteReadPacket) = synchronized(state) {
-        if (packet.isEmpty) return
-        state.writePacket(packet.copy())
+    fun update(packet: Source) {
+        synchronized(state) {
+            if (packet.exhausted()) return
+            state.writePacket(packet.peek())
+        }
     }
 
     fun doHash(hashName: String): ByteArray = synchronized(state) {
-        state.preview { handshakes: ByteReadPacket ->
+        state.preview { handshakes: Source ->
             val digest = MessageDigest.getInstance(hashName)!!
 
             val buffer = DefaultByteBufferPool.borrow()
             try {
-                while (!handshakes.isEmpty) {
+                while (!handshakes.exhausted()) {
                     val rc = handshakes.readAvailable(buffer)
                     if (rc == -1) break
                     buffer.flip()
@@ -40,7 +44,7 @@ internal value class Digest(val state: BytePacketBuilder) : Closeable {
     }
 
     override fun close() {
-        state.release()
+        state.close()
     }
 }
 
@@ -50,7 +54,7 @@ internal operator fun Digest.plusAssign(record: TLSHandshake) {
     update(
         buildPacket {
             writeTLSHandshakeType(record.type, record.packet.remaining.toInt())
-            if (record.packet.remaining > 0) writePacket(record.packet.copy())
+            if (record.packet.remaining > 0) writePacket(record.packet.peek())
         }
     )
 }

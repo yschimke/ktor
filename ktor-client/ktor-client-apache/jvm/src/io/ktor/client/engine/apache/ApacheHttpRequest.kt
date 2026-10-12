@@ -5,7 +5,6 @@
 package io.ktor.client.engine.apache
 
 import io.ktor.client.plugins.*
-import io.ktor.client.plugins.sse.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.util.date.*
@@ -43,7 +42,7 @@ internal suspend fun CloseableHttpAsyncClient.sendRequest(
         }
 
         val rawHeaders = rawResponse.allHeaders.filter {
-            it.name != null || !it.name.isBlank()
+            it.name != null || it.name.isNotBlank()
         }.groupBy(
             { it.name },
             { it.value ?: "" }
@@ -64,8 +63,8 @@ internal suspend fun CloseableHttpAsyncClient.sendRequest(
     }
 }
 
-internal fun mapCause(exception: Exception, requestData: HttpRequestData): Exception = when {
-    exception is ConnectException && exception.isTimeoutException() -> ConnectTimeoutException(requestData, exception)
-    exception is java.net.SocketTimeoutException -> SocketTimeoutException(requestData, exception)
+internal fun mapCause(exception: Exception, requestData: HttpRequestData): Exception = when (exception) {
+    is ConnectException if exception.isTimeoutException() -> ConnectTimeoutException(requestData, exception)
+    is SocketTimeoutException -> SocketTimeoutException(requestData, exception)
     else -> exception
 }

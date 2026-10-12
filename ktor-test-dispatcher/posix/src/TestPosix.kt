@@ -4,12 +4,15 @@
 
 package io.ktor.test.dispatcher
 
-import kotlinx.coroutines.*
-import kotlinx.coroutines.test.*
-import kotlin.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlin.coroutines.CoroutineContext
 
 /**
  * Test runner for native suspend tests.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.test.dispatcher.testSuspend)
  */
 public actual fun testSuspend(
     context: CoroutineContext,

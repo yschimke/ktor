@@ -6,6 +6,7 @@ package io.ktor.client.engine.android
 
 import io.ktor.client.call.*
 import io.ktor.client.engine.*
+import io.ktor.client.io.*
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.sse.*
 import io.ktor.client.request.*
@@ -14,22 +15,36 @@ import io.ktor.http.content.*
 import io.ktor.util.date.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.jvm.javaio.*
-import kotlinx.coroutines.*
-import java.io.*
-import java.net.*
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.job
+import java.io.OutputStream
+import java.net.HttpURLConnection
 import java.util.*
-import javax.net.ssl.*
-import kotlin.coroutines.*
-
-private val METHODS_WITHOUT_BODY = listOf(HttpMethod.Get, HttpMethod.Head)
+import javax.net.ssl.HttpsURLConnection
+import kotlin.coroutines.CoroutineContext
 
 /**
  * An Android client engine.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.android.AndroidClientEngine)
  */
 @OptIn(InternalAPI::class)
 public class AndroidClientEngine(override val config: AndroidEngineConfig) : HttpClientEngineBase("ktor-android") {
-
     override val supportedCapabilities: Set<HttpClientEngineCapability<*>> = setOf(HttpTimeoutCapability, SSECapability)
+
+    private val urlFactory: URLConnectionFactory = if (isHttpEngineAvailable(config)) {
+        AndroidNetHttpEngineFactory(config)
+    } else {
+        URLConnectionFactory.StandardURLConnectionFactory(config)
+    }
+
+    init {
+        configurePlatform()
+        coroutineContext.job.invokeOnCompletion {
+            urlFactory.close()
+        }
+    }
 
     override suspend fun execute(data: HttpRequestData): HttpResponseData {
         val callContext = callContext()
@@ -41,7 +56,9 @@ public class AndroidClientEngine(override val config: AndroidEngineConfig) : Htt
         val contentLength: Long? = data.headers[HttpHeaders.ContentLength]?.toLong()
             ?: outgoingContent.contentLength
 
-        val connection: HttpURLConnection = getProxyAwareConnection(url).apply {
+        val connection: HttpURLConnection = urlFactory(url).apply {
+            disconnectOnCancellation(callContext)
+
             connectTimeout = config.connectTimeout
             readTimeout = config.socketTimeout
 
@@ -55,13 +72,11 @@ public class AndroidClientEngine(override val config: AndroidEngineConfig) : Htt
             useCaches = false
             instanceFollowRedirects = false
 
-            mergeHeaders(data.headers, outgoingContent) { key: String, value: String ->
-                addRequestProperty(key, value)
-            }
+            data.forEachHeader(::addRequestProperty)
 
             config.requestConfig(this)
 
-            if (data.method in METHODS_WITHOUT_BODY) {
+            if (!data.method.supportsRequestBody) {
                 if (outgoingContent.isEmpty()) {
                     return@apply
                 }
@@ -85,7 +100,7 @@ public class AndroidClientEngine(override val config: AndroidEngineConfig) : Htt
             val statusCode = responseMessage?.let { HttpStatusCode(responseCode, it) }
                 ?: HttpStatusCode.fromValue(responseCode)
 
-            val content: ByteReadChannel = current.content(callContext, data)
+            val content: ByteReadChannel = current.content(responseCode, callContext)
             val headerFields: Map<String, List<String>> = current.headerFields
                 .mapKeys { it.key?.lowercase(Locale.getDefault()) ?: "" }
                 .filter { it.key.isNotBlank() }
@@ -100,22 +115,16 @@ public class AndroidClientEngine(override val config: AndroidEngineConfig) : Htt
             HttpResponseData(statusCode, requestTime, responseHeaders, version, responseBody, callContext)
         }
     }
-
-    private fun getProxyAwareConnection(urlString: String): HttpURLConnection {
-        val url = URL(urlString)
-        val connection: URLConnection = config.proxy?.let { url.openConnection(it) } ?: url.openConnection()
-        return connection as HttpURLConnection
-    }
 }
 
 @OptIn(DelicateCoroutinesApi::class)
-@Suppress("BlockingMethodInNonBlockingContext", "DEPRECATION")
 internal suspend fun OutgoingContent.writeTo(
     stream: OutputStream,
     callContext: CoroutineContext
 ): Unit = stream.use { blockingOutput ->
     when (this) {
         is OutgoingContent.ByteArrayContent -> blockingOutput.write(bytes())
+
         is OutgoingContent.ReadChannelContent -> run {
             readFrom().copyTo(blockingOutput)
         }

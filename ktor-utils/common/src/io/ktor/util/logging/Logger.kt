@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.util.logging
@@ -18,10 +18,51 @@ public expect interface Logger {
 }
 
 public expect val Logger.isTraceEnabled: Boolean
+public expect val Logger.isDebugEnabled: Boolean
 
 /**
  * Logs an error from an [exception] using its message
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.logging.error)
  */
 public fun Logger.error(exception: Throwable) {
     error(exception.message ?: "Exception of type ${exception::class}", exception)
+}
+
+/**
+ * Check `isTraceEnabled` flag before logging to save some memory allocations.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.logging.trace)
+ */
+public inline fun Logger.trace(message: () -> String) {
+    if (isTraceEnabled) trace(message())
+}
+
+/**
+ * Check `isTraceEnabled` flag before logging to save some memory
+ * allocations.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.logging.trace)
+ */
+public inline fun Logger.trace(cause: Throwable, message: () -> String) {
+    if (isTraceEnabled) trace(message(), cause)
+}
+
+/**
+ * Check `isDebugEnabled` flag before logging to save some memory allocations.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.logging.debug)
+ */
+public inline fun Logger.debug(message: () -> String) {
+    if (isDebugEnabled) debug(message())
+}
+
+/**
+ * Check `isDebugEnabled` flag before logging to save some memory
+ * allocations.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.logging.debug)
+ */
+public inline fun Logger.debug(cause: Throwable, message: () -> String) {
+    if (isDebugEnabled) debug(message(), cause)
 }

@@ -1,9 +1,13 @@
+/*
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 package io.ktor.utils.io.errors
 
-import io.ktor.utils.io.core.*
-import kotlinx.cinterop.*
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.toKString
 import platform.posix.*
-import kotlin.native.concurrent.*
 
 private val KnownPosixErrors = mapOf(
     EBADF to "EBADF",
@@ -27,6 +31,9 @@ private val KnownPosixErrors = mapOf(
 
 /**
  * Represents a POSIX error. Could be thrown when a POSIX function returns error code.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.errors.PosixException)
+ *
  * @property errno error code that caused this exception
  * @property message error text
  */
@@ -68,7 +75,9 @@ public sealed class PosixException(public val errno: Int, message: String) : Exc
          * Create the corresponding instance of PosixException
          * with error message provided by the underlying POSIX implementation.
          *
-         * @param errno error code returned by [posix.platform.errno]
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.errors.PosixException.Companion.forErrno)
+         *
+         * @param errno error code returned by [platform.posix.errno]
          * @param posixFunctionName optional function name to be included to the exception message
          * @return an instance of [PosixException] or it's subtype
          */
@@ -97,26 +106,39 @@ public sealed class PosixException(public val errno: Int, message: String) : Exc
                 EWOULDBLOCK, EAGAIN -> TryAgainException(errno, message)
 
                 EBADMSG -> BadMessageException(message)
+
                 EINTR -> InterruptedException(message)
+
                 EINVAL -> InvalidArgumentException(message)
+
                 ECONNREFUSED -> ConnectionRefusedException(message)
+
                 ECONNABORTED -> ConnectionAbortedException(message)
+
                 ECONNRESET -> ConnectionResetException(message)
+
                 ENOTCONN -> NotConnectedException(message)
+
                 ETIMEDOUT -> TimeoutIOException(message)
+
                 EOVERFLOW -> OverflowException(message)
+
                 ENOMEM -> NoMemoryException(message)
+
                 ENOTSOCK -> NotSocketException(message)
+
                 EADDRINUSE -> AddressAlreadyInUseException(message)
+
                 ENOENT -> NoSuchFileException(message)
+
                 else -> PosixErrnoException(errno, message)
             }
         }
     }
 }
 
-internal fun PosixException.wrapIO(): IOException =
-    IOException("I/O operation failed due to posix error code $errno", this)
+internal fun PosixException.wrapIO(): kotlinx.io.IOException =
+    kotlinx.io.IOException("I/O operation failed due to posix error code $errno", this)
 
 @OptIn(ExperimentalForeignApi::class)
 private fun posixErrorToString(errno: Int): String = strerror(errno)?.toKString() ?: "Unknown error code: $errno"

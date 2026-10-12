@@ -1,6 +1,6 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.client.engine.cio
 
@@ -12,15 +12,16 @@ import io.ktor.network.sockets.*
 import io.ktor.util.cio.*
 import io.ktor.util.date.*
 import io.ktor.utils.io.*
-import io.ktor.utils.io.core.*
 import io.ktor.utils.io.pool.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.channels.*
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.sync.*
-import java.nio.channels.*
-import kotlin.coroutines.*
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.io.EOFException
+import java.nio.channels.ClosedChannelException
+import kotlin.coroutines.CoroutineContext
+import io.ktor.utils.io.ByteChannel as KtorByteChannel
 
 internal actual class ConnectionPipeline actual constructor(
     keepAliveTime: Long,
@@ -37,7 +38,7 @@ internal actual class ConnectionPipeline actual constructor(
     private val requestLimit = Semaphore(pipelineMaxSize)
     private val responseChannel = Channel<ConnectionResponseTask>(Channel.UNLIMITED)
 
-    public actual val pipelineContext: Job = launch(start = CoroutineStart.LAZY) {
+    actual val pipelineContext: Job = launch(start = CoroutineStart.LAZY) {
         try {
             while (true) {
                 val task = withTimeoutOrNull(keepAliveTime) {
@@ -52,7 +53,7 @@ internal actual class ConnectionPipeline actual constructor(
                     throw cause
                 }
 
-                writeRequest(task.request, networkOutput, task.context, overProxy, closeChannel = false)
+                writeRequest(task.request, networkOutput, task.context, overProxy, closeChannel = false)?.join()
                 networkOutput.flush()
             }
         } catch (_: ClosedChannelException) {
@@ -60,9 +61,7 @@ internal actual class ConnectionPipeline actual constructor(
         } catch (_: CancellationException) {
         } finally {
             responseChannel.close()
-            /**
-             * Workaround bug with socket.close
-             */
+            // Workaround bug with socket.close
 //            outputChannel.close()
         }
     }
@@ -74,14 +73,17 @@ internal actual class ConnectionPipeline actual constructor(
                 requestLimit.release()
                 try {
                     val rawResponse = parseResponse(networkInput)
-                        ?: throw EOFException("Failed to parse HTTP response: unexpected EOF")
+                        ?: throw ClosedReadChannelException(
+                            EOFException("Failed to parse HTTP response: unexpected EOF")
+                        )
 
                     val callContext = task.context
                     val callJob = callContext[Job]!!
 
                     val status = HttpStatusCode(rawResponse.status, rawResponse.statusText.toString())
                     val method = task.request.method
-                    val contentLength = rawResponse.headers[HttpHeaders.ContentLength]?.toString()?.toLong() ?: -1L
+                    val contentLength =
+                        rawResponse.headers[HttpHeaders.ContentLength]?.toString()?.toLongOrNull() ?: -1L
                     val transferEncoding = rawResponse.headers[HttpHeaders.TransferEncoding]
                     val chunked = transferEncoding == "chunked"
                     val connectionType = ConnectionOptions.parse(rawResponse.headers[HttpHeaders.Connection])
@@ -101,14 +103,16 @@ internal actual class ConnectionPipeline actual constructor(
                         (status !in listOf(HttpStatusCode.NotModified, HttpStatusCode.NoContent)) &&
                         !status.isInformational()
 
-                    val responseChannel = if (hasBody) ByteChannel() else null
+                    val responseChannel = if (hasBody) KtorByteChannel() else null
 
                     var skipTask: Job? = null
                     val body: ByteReadChannel = if (responseChannel != null) {
-                        val proxyChannel = ByteChannel()
+                        val proxyChannel = KtorByteChannel()
                         skipTask = skipCancels(responseChannel, proxyChannel)
                         proxyChannel
-                    } else ByteReadChannel.Empty
+                    } else {
+                        ByteReadChannel.Empty
+                    }
 
                     callJob.invokeOnCompletion {
                         body.cancel()
@@ -138,7 +142,7 @@ internal actual class ConnectionPipeline actual constructor(
                 if (shouldClose) break
             }
         } finally {
-            networkOutput.close()
+            networkOutput.flushAndClose()
             connection.socket.close()
         }
     }
@@ -174,6 +178,6 @@ private fun CoroutineScope.skipCancels(
         output.close(cause)
         throw cause
     } finally {
-        output.close()
+        output.flushAndClose()
     }
 }

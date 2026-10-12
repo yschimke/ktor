@@ -1,53 +1,57 @@
+/*
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
+import ktorbuild.*
+import ktorbuild.targets.javaModuleName
+
 plugins {
+    id("ktorbuild.base")
     id("java-library")
 }
 
 description = "Internal module for checking JPMS compliance"
 
-tasks.register("generateModuleInfo") {
-    doLast {
-        val modules = rootProject.subprojects
-            .filter { it.hasJavaModule }
-            .map { it.javaModuleName() }
+val jvmProjects = projectsWithTag(ProjectTag.Jvm)
 
-        File(projectDir.absolutePath + "/src/main/java/module-info.java")
+val generateModuleInfo = tasks.register("generateModuleInfo") {
+    val modules = jvmProjects.mapValue(Project::javaModuleName)
+    inputs.property("modules", modules)
+
+    val moduleInfoFile = layout.projectDirectory.file("src/main/java/module-info.java")
+    outputs.file(moduleInfoFile)
+
+    doLast {
+        moduleInfoFile.asFile
             .apply {
                 parentFile.mkdirs()
                 createNewFile()
             }
-            .writer().buffered().use { writer ->
+            .bufferedWriter().use { writer ->
                 writer.write("module io.ktor.test.module {\n")
-                modules.forEach { writer.write("\trequires $it;\n") }
+                modules.get().forEach { writer.write("\trequires $it;\n") }
                 writer.write("}")
             }
     }
 }
 
-val compileJava = tasks.getByName<JavaCompile>("compileJava") {
-    dependsOn("generateModuleInfo")
+tasks.named<JavaCompile>("compileJava") {
+    dependsOn(generateModuleInfo)
+
+    val emptyClasspath = objects.fileCollection()
     doFirst {
         options.compilerArgs.addAll(listOf("--module-path", classpath.asPath))
-        classpath = files()
+        classpath = emptyClasspath
     }
 }
+
+// Here should be specified the latest LTS version
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(17))
+        languageVersion = JavaLanguageVersion.of(21)
     }
 }
 
-dependencies {
-    rootProject.subprojects
-        .filter { it.hasJavaModule }
-        .map {
-            generateSequence(it) { it.parent }
-                .toList()
-                .dropLast(1)
-                .reversed()
-                .joinToString(":", prefix = ":") { it.name }
-        }
-        .forEach { api(project(it)) }
+configurations.implementation {
+    dependencies.addAllLater(jvmProjects.mapValue(project.dependencies::create))
 }
-
-internal val Project.hasJavaModule: Boolean
-    get() = plugins.hasPlugin("maven-publish") && name != "ktor-bom" && name != "ktor-java-modules-test" && name != "ktor-serialization-kotlinx-xml" && hasJvm

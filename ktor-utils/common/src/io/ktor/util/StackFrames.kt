@@ -8,7 +8,6 @@ import kotlin.reflect.*
 
 internal expect class StackTraceElement
 
-@Suppress("FunctionName")
 internal expect fun createStackTraceElement(
     kClass: KClass<*>,
     methodName: String,
@@ -17,6 +16,6 @@ internal expect fun createStackTraceElement(
 ): StackTraceElement
 
 internal expect interface CoroutineStackFrame {
-    public val callerFrame: CoroutineStackFrame?
-    public fun getStackTraceElement(): StackTraceElement?
+    val callerFrame: CoroutineStackFrame?
+    fun getStackTraceElement(): StackTraceElement?
 }

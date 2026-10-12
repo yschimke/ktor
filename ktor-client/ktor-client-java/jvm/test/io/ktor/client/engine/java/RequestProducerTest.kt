@@ -5,6 +5,7 @@
 package io.ktor.client.engine.java
 
 import io.ktor.client.request.*
+import io.ktor.client.utils.*
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.util.*
@@ -17,6 +18,34 @@ import kotlin.test.*
 import kotlin.test.Test
 
 class RequestProducerTest {
+
+    companion object {
+        init {
+            // Trigger the Java engine factory init block which sets the JDK system property
+            // allowing the Host header. This must happen before any test calls convertToHttpRequest,
+            // because the JDK caches the restricted headers set on first HttpClient class load.
+            Java
+        }
+    }
+
+    @OptIn(InternalAPI::class)
+    @Test
+    fun `custom Host header is preserved in request`() {
+        val request = HttpRequestData(
+            Url("http://127.0.0.1/"),
+            HttpMethod.Get,
+            Headers.build {
+                append(HttpHeaders.Host, "CustomHost")
+            },
+            EmptyContent,
+            Job(),
+            Attributes()
+        ).convertToHttpRequest(EmptyCoroutineContext)
+
+        val hostHeader = request.headers().firstValue("Host")
+        assertTrue(hostHeader.isPresent, "Host header should be present in the request")
+        assertEquals("CustomHost", hostHeader.get())
+    }
 
     @OptIn(InternalAPI::class)
     @Test
@@ -38,6 +67,38 @@ class RequestProducerTest {
             request.headers().firstValue(HttpHeaders.ContentType).get()
         )
         assertEquals(2, request.bodyPublisher().get().contentLength())
+    }
+
+    @OptIn(InternalAPI::class)
+    @Test
+    fun `JDK-allowed headers are delegated while JDK-managed headers are dropped`() {
+        val request = HttpRequestData(
+            Url("http://127.0.0.1/"),
+            HttpMethod.Get,
+            Headers.build {
+                append(HttpHeaders.Date, "Wed, 21 Oct 2015 07:28:00 GMT")
+                append(HttpHeaders.From, "user@example.com")
+                append(HttpHeaders.Via, "1.1 ktor")
+                append(HttpHeaders.Warning, "199 ktor test")
+                append(HttpHeaders.Connection, "close")
+                append(HttpHeaders.Expect, "100-continue")
+                append(HttpHeaders.Upgrade, "websocket")
+            },
+            EmptyContent,
+            Job(),
+            Attributes()
+        ).convertToHttpRequest(EmptyCoroutineContext)
+
+        val headers = request.headers()
+        // Delegated to the JDK, which accepts them (JDK-8213189).
+        assertEquals("Wed, 21 Oct 2015 07:28:00 GMT", headers.firstValue(HttpHeaders.Date).get())
+        assertEquals("user@example.com", headers.firstValue(HttpHeaders.From).get())
+        assertEquals("1.1 ktor", headers.firstValue(HttpHeaders.Via).get())
+        assertEquals("199 ktor test", headers.firstValue(HttpHeaders.Warning).get())
+        // Still managed/restricted by the JDK, so omitted by the engine.
+        assertFalse(headers.firstValue(HttpHeaders.Connection).isPresent)
+        assertFalse(headers.firstValue(HttpHeaders.Expect).isPresent)
+        assertFalse(headers.firstValue(HttpHeaders.Upgrade).isPresent)
     }
 
     @Test

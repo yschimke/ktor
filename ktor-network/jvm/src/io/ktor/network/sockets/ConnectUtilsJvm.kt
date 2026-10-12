@@ -1,6 +1,6 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.network.sockets
 
@@ -9,7 +9,7 @@ import java.net.*
 import java.nio.channels.*
 import java.nio.channels.spi.*
 
-internal actual suspend fun connect(
+internal actual suspend fun tcpConnect(
     selector: SelectorManager,
     remoteAddress: SocketAddress,
     socketOptions: SocketOptions.TCPClientSocketOptions
@@ -22,7 +22,7 @@ internal actual suspend fun connect(
     }
 }
 
-internal actual fun bind(
+internal actual suspend fun tcpBind(
     selector: SelectorManager,
     localAddress: SocketAddress?,
     socketOptions: SocketOptions.AcceptorOptions
@@ -41,6 +41,7 @@ internal actual fun bind(
 
 internal fun SelectorProvider.openSocketChannelFor(address: SocketAddress) = when (address) {
     is InetSocketAddress -> openSocketChannel()
+
     is UnixSocketAddress -> {
         val selectorProviderClass = SelectorProvider::class.java
         val protocolFamilyClass = ProtocolFamily::class.java
@@ -52,7 +53,9 @@ internal fun SelectorProvider.openSocketChannelFor(address: SocketAddress) = whe
 
 internal fun SelectorProvider.openServerSocketChannelFor(address: SocketAddress?) = when (address) {
     null -> openServerSocketChannel()
+
     is InetSocketAddress -> openServerSocketChannel()
+
     is UnixSocketAddress -> {
         val selectorProviderClass = SelectorProvider::class.java
         val protocolFamilyClass = ProtocolFamily::class.java

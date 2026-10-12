@@ -9,8 +9,10 @@ import java.io.*
 
 /**
  * Convert io.ktor.utils.io [Input] to java [InputStream]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.asStream)
  */
-@Suppress("DEPRECATION")
+
 public fun Input.asStream(): InputStream = object : InputStream() {
 
     override fun read(): Int {

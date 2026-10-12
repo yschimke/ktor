@@ -8,58 +8,73 @@ import io.ktor.http.*
 import io.ktor.util.*
 import platform.Foundation.*
 
+// Old version of macOS/iOS might not allow semicolon ';' in path for
+// compatibility with RFC 1808 (obsolete). However, ';' is a valid character according to RFC-3986.
+private val pathAllowedCharacters =
+    if (NSCharacterSet.URLPathAllowedCharacterSet.characterIsMember(';'.code.toUShort())) {
+        NSCharacterSet.URLPathAllowedCharacterSet
+    } else {
+        (NSCharacterSet.URLPathAllowedCharacterSet.mutableCopy() as NSMutableCharacterSet).apply {
+            addCharactersInString(";")
+        }
+    }
+
 internal fun Url.toNSUrl(): NSURL {
     val userEncoded = encodedUser.orEmpty().isEncoded(NSCharacterSet.URLUserAllowedCharacterSet)
     val passwordEncoded = encodedPassword.orEmpty().isEncoded(NSCharacterSet.URLUserAllowedCharacterSet)
     val hostEncoded = host.isEncoded(NSCharacterSet.URLHostAllowedCharacterSet)
-    val pathEncoded = encodedPath.isEncoded(NSCharacterSet.URLPathAllowedCharacterSet)
+    val pathEncoded = encodedPath.isEncoded(pathAllowedCharacters)
     val queryEncoded = encodedQuery.isEncoded(NSCharacterSet.URLQueryAllowedCharacterSet)
     val fragmentEncoded = encodedFragment.isEncoded(NSCharacterSet.URLFragmentAllowedCharacterSet)
     if (userEncoded && passwordEncoded && hostEncoded && pathEncoded && queryEncoded && fragmentEncoded) {
         return NSURL(string = toString())
     }
 
-    val components = NSURLComponents()
+    with(Url(this.toString())) {
+        val components = NSURLComponents()
 
-    components.scheme = protocol.name
+        components.scheme = protocol.name
 
-    components.percentEncodedUser = when {
-        userEncoded -> encodedUser
-        else -> user?.sanitize(NSCharacterSet.URLUserAllowedCharacterSet)
-    }
-    components.percentEncodedPassword = when {
-        passwordEncoded -> encodedPassword
-        else -> password?.sanitize(NSCharacterSet.URLUserAllowedCharacterSet)
-    }
+        components.percentEncodedUser = when {
+            userEncoded -> encodedUser
+            else -> user?.sanitize(NSCharacterSet.URLUserAllowedCharacterSet)
+        }
+        components.percentEncodedPassword = when {
+            passwordEncoded -> encodedPassword
+            else -> password?.sanitize(NSCharacterSet.URLUserAllowedCharacterSet)
+        }
 
-    components.percentEncodedHost = when {
-        hostEncoded -> host
-        else -> host.sanitize(NSCharacterSet.URLHostAllowedCharacterSet)
-    }
-    if (port != DEFAULT_PORT && port != protocol.defaultPort) {
-        components.port = NSNumber(int = port)
-    }
+        components.percentEncodedHost = when {
+            hostEncoded -> host
+            else -> host.sanitize(NSCharacterSet.URLHostAllowedCharacterSet)
+        }
+        if (port != DEFAULT_PORT && port != protocol.defaultPort) {
+            components.port = NSNumber(int = port)
+        }
 
-    components.percentEncodedPath = when {
-        pathEncoded -> encodedPath
-        else -> pathSegments.joinToString("/").sanitize(NSCharacterSet.URLPathAllowedCharacterSet)
-    }
+        components.percentEncodedPath = when {
+            pathEncoded -> encodedPath
+            else -> rawSegments.joinToString("/").sanitize(pathAllowedCharacters)
+        }
 
-    when {
-        encodedQuery.isEmpty() -> components.percentEncodedQuery = null
-        queryEncoded -> components.percentEncodedQuery = encodedQuery
-        else -> components.percentEncodedQueryItems = parameters.toMap()
-            .flatMap { (key, value) -> if (value.isEmpty()) listOf(key to null) else value.map { key to it } }
-            .map { NSURLQueryItem(it.first.encodeQueryKey(), it.second?.encodeQueryValue()) }
-    }
+        when {
+            encodedQuery.isEmpty() -> components.percentEncodedQuery = null
 
-    components.percentEncodedFragment = when {
-        encodedFragment.isEmpty() -> null
-        fragmentEncoded -> encodedFragment
-        else -> fragment.sanitize(NSCharacterSet.URLFragmentAllowedCharacterSet)
-    }
+            queryEncoded -> components.percentEncodedQuery = encodedQuery
 
-    return components.URL ?: error("Invalid url: $this")
+            else -> components.percentEncodedQueryItems = parameters.toMap()
+                .flatMap { (key, value) -> if (value.isEmpty()) listOf(key to null) else value.map { key to it } }
+                .map { NSURLQueryItem(it.first.encodeQueryKey(), it.second?.encodeQueryValue()) }
+        }
+
+        components.percentEncodedFragment = when {
+            encodedFragment.isEmpty() -> null
+            fragmentEncoded -> encodedFragment
+            else -> fragment.sanitize(NSCharacterSet.URLFragmentAllowedCharacterSet)
+        }
+
+        return components.URL ?: error("Invalid url: $this")
+    }
 }
 
 private fun String.sanitize(allowed: NSCharacterSet): String =

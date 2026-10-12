@@ -1,18 +1,19 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.sessions
 
-import io.ktor.util.*
-import java.security.*
-import javax.crypto.*
-import javax.crypto.spec.*
+import java.security.MessageDigest
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * A transformer used to sign session data.
  * This transformer appends an [algorithm] MAC (Message Authentication Code) hash of the session data.
  * It uses a specified [keySpec] when generating the MAC hash.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.sessions.SessionTransportTransformerMessageAuthentication)
  *
  * @see [Sessions]
  *
@@ -43,6 +44,6 @@ public class SessionTransportTransformerMessageAuthentication(
         val mac = Mac.getInstance(algorithm)
         mac.init(keySpec)
 
-        return hex(mac.doFinal(value.toByteArray()))
+        return mac.doFinal(value.toByteArray()).toHexString()
     }
 }

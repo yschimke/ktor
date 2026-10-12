@@ -1,6 +1,9 @@
 public final class io/ktor/client/engine/okhttp/OkHttp : io/ktor/client/engine/HttpClientEngineFactory {
 	public static final field INSTANCE Lio/ktor/client/engine/okhttp/OkHttp;
 	public fun create (Lkotlin/jvm/functions/Function1;)Lio/ktor/client/engine/HttpClientEngine;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/ktor/client/engine/okhttp/OkHttpConfig : io/ktor/client/engine/HttpClientEngineConfig {
@@ -9,9 +12,13 @@ public final class io/ktor/client/engine/okhttp/OkHttpConfig : io/ktor/client/en
 	public final fun addNetworkInterceptor (Lokhttp3/Interceptor;)V
 	public final fun config (Lkotlin/jvm/functions/Function1;)V
 	public final fun getClientCacheSize ()I
+	public final fun getDns ()Lokhttp3/Dns;
+	public final fun getDuplexStreamingEnabled ()Z
 	public final fun getPreconfigured ()Lokhttp3/OkHttpClient;
 	public final fun getWebSocketFactory ()Lokhttp3/WebSocket$Factory;
 	public final fun setClientCacheSize (I)V
+	public final fun setDns (Lokhttp3/Dns;)V
+	public final fun setDuplexStreamingEnabled (Z)V
 	public final fun setPreconfigured (Lokhttp3/OkHttpClient;)V
 	public final fun setWebSocketFactory (Lokhttp3/WebSocket$Factory;)V
 }
@@ -29,6 +36,7 @@ public final class io/ktor/client/engine/okhttp/OkHttpEngine : io/ktor/client/en
 public final class io/ktor/client/engine/okhttp/OkHttpEngineContainer : io/ktor/client/HttpClientEngineContainer {
 	public fun <init> ()V
 	public fun getFactory ()Lio/ktor/client/engine/HttpClientEngineFactory;
+	public fun getPriority ()D
 	public fun toString ()Ljava/lang/String;
 }
 

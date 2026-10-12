@@ -1,10 +1,10 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.network.sockets
 
-import java.lang.reflect.*
+import java.lang.reflect.Method
 
 public actual sealed class SocketAddress {
     internal abstract val address: java.net.SocketAddress
@@ -19,8 +19,23 @@ public actual class InetSocketAddress internal constructor(
 
     public actual val port: Int get() = address.port
 
+    public actual fun resolveAddress(): ByteArray? = address.address?.address
+
     public actual constructor(hostname: String, port: Int) :
         this(java.net.InetSocketAddress(hostname, port))
+
+    public actual constructor(address: ByteArray, port: Int) : this(
+        java.net.InetSocketAddress(
+            java.net.InetAddress.getByAddress(
+                address.also {
+                    require(it.size == 4 || it.size == 16) {
+                        "Invalid IP address byte array length: ${it.size}. Expected 4 (IPv4) or 16 (IPv6)."
+                    }
+                }
+            ),
+            port
+        )
+    )
 
     public actual operator fun component1(): String = hostname
 
@@ -30,6 +45,8 @@ public actual class InetSocketAddress internal constructor(
      * Create a copy of [InetSocketAddress].
      *
      * Note that this may trigger a name service reverse lookup.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.network.sockets.InetSocketAddress.copy)
      */
     public actual fun copy(
         hostname: String,
@@ -45,9 +62,7 @@ public actual class InetSocketAddress internal constructor(
 
         other as InetSocketAddress
 
-        if (address != other.address) return false
-
-        return true
+        return address == other.address
     }
 
     actual override fun hashCode(): Int {
@@ -58,7 +73,8 @@ public actual class InetSocketAddress internal constructor(
 }
 
 public actual class UnixSocketAddress internal constructor(
-    override val address: java.net.SocketAddress // actually: java.net.UnixDomainSocketAddress
+    // actually: java.net.UnixDomainSocketAddress
+    override val address: java.net.SocketAddress
 ) : SocketAddress() {
 
     init {
@@ -93,9 +109,7 @@ public actual class UnixSocketAddress internal constructor(
 
         other as UnixSocketAddress
 
-        if (address != other.address) return false
-
-        return true
+        return address == other.address
     }
 
     actual override fun hashCode(): Int {
@@ -104,17 +118,26 @@ public actual class UnixSocketAddress internal constructor(
 
     public actual override fun toString(): String = address.toString()
 
-    private companion object {
+    public actual companion object {
         private val unixDomainSocketAddressClass = try {
             Class.forName(UNIX_DOMAIN_SOCKET_ADDRESS_CLASS)
         } catch (exception: ClassNotFoundException) {
             null
         }
 
-        private fun checkSupportForUnixDomainSockets(): Class<*> {
+        internal fun checkSupportForUnixDomainSockets(): Class<*> {
             return unixDomainSocketAddressClass
                 ?: error("Unix domain sockets are unsupported before Java 16.")
         }
+
+        /**
+         * Checks if Unix domain sockets are supported on the current platform.
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.network.sockets.UnixSocketAddress.Companion.isSupported)
+         *
+         * @return `true` if Unix domain sockets are supported, `false` otherwise.
+         */
+        public actual fun isSupported(): Boolean = unixDomainSocketAddressClass != null
     }
 }
 

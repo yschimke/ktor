@@ -1,0 +1,165 @@
+/*
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
+package io.ktor.server.auth
+
+import io.ktor.http.auth.*
+import io.ktor.server.application.*
+import io.ktor.server.request.*
+import io.ktor.server.response.*
+import io.ktor.utils.io.charsets.*
+import kotlin.io.encoding.Base64
+
+/**
+ * A `basic` [Authentication] provider.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.auth.BasicAuthenticationProvider)
+ *
+ * @see [basic]
+ * @property name is the name of the provider, or `null` for a default provider.
+ */
+public class BasicAuthenticationProvider internal constructor(
+    config: Config
+) : AuthenticationProvider(config) {
+    internal val realm: String = config.realm
+
+    internal val charset: Charset? = config.charset
+
+    internal val authenticationFunction = config.authenticationFunction
+
+    override suspend fun onAuthenticate(context: AuthenticationContext) {
+        val call = context.call
+        val credentials = call.request.basicAuthenticationCredentials(charset)
+        val principal = credentials?.let { authenticationFunction(call, it) }
+
+        val cause = when {
+            credentials == null -> AuthenticationFailedCause.NoCredentials
+            principal == null -> AuthenticationFailedCause.InvalidCredentials
+            else -> null
+        }
+
+        if (cause != null) {
+            @Suppress("NAME_SHADOWING")
+            context.challenge(basicAuthenticationChallengeKey, cause) { challenge, call ->
+                call.respond(UnauthorizedResponse(HttpAuthHeader.basicAuthChallenge(realm, charset)))
+                challenge.complete()
+            }
+        }
+        if (principal != null) {
+            context.principal(name, principal)
+        }
+    }
+
+    /**
+     * A configuration for the [basic] authentication provider.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.auth.BasicAuthenticationProvider.Config)
+     */
+    public class Config internal constructor(
+        name: String?,
+        description: String?
+    ) : AuthenticationProvider.Config(name, description) {
+        internal var authenticationFunction: AuthenticationFunction<UserPasswordCredential> = {
+            throw NotImplementedError(
+                "Basic auth validate function is not specified. Use basic { validate { ... } } to fix."
+            )
+        }
+
+        /**
+         * Specifies a realm to be passed in the `WWW-Authenticate` header.
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.auth.BasicAuthenticationProvider.Config.realm)
+         */
+        public var realm: String = "Ktor Server"
+
+        /**
+         * Specifies the charset to be used. It can be either `UTF_8` or `null`.
+         * Setting `null` turns on a legacy mode (`ISO-8859-1`).
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.auth.BasicAuthenticationProvider.Config.charset)
+         */
+        public var charset: Charset? = Charsets.UTF_8
+            set(value) {
+                if (value != null && value != Charsets.UTF_8) {
+                    // https://tools.ietf.org/html/rfc7617#section-2.1
+                    // 'The only allowed value is "UTF-8"; it is to be matched case-insensitively'
+                    throw IllegalArgumentException("Basic Authentication charset can be either UTF-8 or null")
+                }
+                field = value
+            }
+
+        /**
+         * Sets a validation function that checks a specified [UserPasswordCredential] instance and
+         * returns principal [Any] in a case of successful authentication or null if authentication fails.
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.auth.BasicAuthenticationProvider.Config.validate)
+         */
+        public fun validate(body: suspend ApplicationCall.(UserPasswordCredential) -> Any?) {
+            authenticationFunction = body
+        }
+    }
+}
+
+/**
+ * Installs the basic [Authentication] provider.
+ * You can use basic authentication for logging in users and protecting specific routes.
+ * To learn how to configure it, see [Basic authentication](https://ktor.io/docs/basic.html).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.auth.basic)
+ */
+public fun AuthenticationConfig.basic(
+    name: String? = null,
+    configure: BasicAuthenticationProvider.Config.() -> Unit
+) {
+    basic(name, description = null, configure)
+}
+
+/**
+ * Installs the basic [Authentication] provider with description.
+ * You can use basic authentication for logging in users and protecting specific routes.
+ * To learn how to configure it, see [Basic authentication](https://ktor.io/docs/basic.html).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.auth.basic)
+ */
+public fun AuthenticationConfig.basic(
+    name: String? = null,
+    description: String? = null,
+    configure: BasicAuthenticationProvider.Config.() -> Unit
+) {
+    val config = BasicAuthenticationProvider.Config(name, description).apply(configure)
+    val provider = BasicAuthenticationProvider(config)
+    register(provider)
+}
+
+/**
+ * Retrieves [basic] authentication credentials for this [ApplicationRequest].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.auth.basicAuthenticationCredentials)
+ */
+public fun ApplicationRequest.basicAuthenticationCredentials(charset: Charset? = null): UserPasswordCredential? {
+    when (val authHeader = parseAuthorizationHeader()) {
+        is HttpAuthHeader.Single -> {
+            // Verify the auth scheme is HTTP Basic. According to RFC 2617, the authorization scheme should not be
+            // case-sensitive; thus BASIC, or Basic, or basic are all valid.
+            if (!authHeader.authScheme.equals("Basic", ignoreCase = true)) return null
+
+            val userPass = try {
+                val bytes = Base64.decode(authHeader.blob)
+                bytes.decodeToString(0, 0 + bytes.size)
+            } catch (_: Throwable) {
+                return null
+            }
+
+            val colonIndex = userPass.indexOf(':')
+
+            if (colonIndex == -1) return null
+
+            return UserPasswordCredential(userPass.take(colonIndex), userPass.substring(colonIndex + 1))
+        }
+
+        else -> return null
+    }
+}
+
+private val basicAuthenticationChallengeKey: Any = "BasicAuth"

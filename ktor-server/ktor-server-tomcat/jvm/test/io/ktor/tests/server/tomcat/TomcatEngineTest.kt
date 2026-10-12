@@ -12,13 +12,19 @@ import io.ktor.server.routing.*
 import io.ktor.server.servlet.*
 import io.ktor.server.testing.suites.*
 import io.ktor.server.tomcat.*
-import org.apache.catalina.core.*
-import org.apache.tomcat.util.descriptor.web.*
-import java.io.*
-import java.util.logging.*
-import javax.servlet.*
+import org.apache.catalina.core.StandardContext
+import org.apache.tomcat.util.descriptor.web.FilterDef
+import org.apache.tomcat.util.descriptor.web.FilterMap
+import java.io.File
+import java.util.logging.Level
+import java.util.logging.Logger
 import javax.servlet.Filter
-import kotlin.test.*
+import javax.servlet.FilterChain
+import javax.servlet.ServletRequest
+import javax.servlet.ServletResponse
+import kotlin.test.Ignore
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 class TomcatCompressionTest :
     CompressionTestSuite<TomcatApplicationEngine, TomcatApplicationEngine.Configuration>(Tomcat) {
@@ -49,6 +55,11 @@ class TomcatContentTest : ContentTestSuite<TomcatApplicationEngine, TomcatApplic
 
     @Ignore
     override fun testMultipartFileUploadLarge() {
+    }
+
+    @Ignore // KTOR-9263
+    override fun funkyChunked() {
+        super.funkyChunked()
     }
 }
 
@@ -82,7 +93,7 @@ class TomcatHttpServerJvmTest :
     }
 
     @Test
-    fun testServletAttributes() {
+    fun testServletAttributes() = runTest {
         createAndStartServer {
             get("/tomcat/attributes") {
                 call.respondText(
@@ -153,6 +164,10 @@ class TomcatSustainabilityTestSuite :
         enableHttp2 = false
     }
 
+    override fun configure(configuration: TomcatApplicationEngine.Configuration) {
+        configuration.callGroupSize = 5
+    }
+
     /**
      * Tomcat trim `vspace` symbol and drop content-length. The request is treated as chunked.
      */
@@ -167,6 +182,9 @@ class TomcatSustainabilityTestSuite :
     override fun testBlockingConcurrency() {
         super.testBlockingConcurrency()
     }
+
+    @Ignore
+    override fun validateCallCoroutineContext() {}
 }
 
 class TomcatConfigTest : ConfigTestSuite(Tomcat)

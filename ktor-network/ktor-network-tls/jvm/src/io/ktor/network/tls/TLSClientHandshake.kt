@@ -1,6 +1,6 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.network.tls
 
@@ -11,21 +11,31 @@ import io.ktor.utils.io.*
 import io.ktor.utils.io.core.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.*
-import java.security.*
-import java.security.cert.*
+import kotlinx.io.Sink
+import kotlinx.io.Source
+import kotlinx.io.readByteArray
+import java.security.KeyFactory
+import java.security.KeyPairGenerator
+import java.security.SecureRandom
+import java.security.Signature
 import java.security.cert.Certificate
-import java.security.interfaces.*
-import java.security.spec.*
-import javax.crypto.*
-import javax.crypto.spec.*
-import javax.security.auth.x500.*
-import kotlin.coroutines.*
+import java.security.cert.X509Certificate
+import java.security.interfaces.ECPublicKey
+import java.security.spec.ECGenParameterSpec
+import java.security.spec.ECPoint
+import java.security.spec.ECPublicKeySpec
+import javax.crypto.KeyAgreement
+import javax.crypto.spec.SecretKeySpec
+import javax.security.auth.x500.X500Principal
+import kotlin.coroutines.CoroutineContext
+import kotlin.use
 
 internal class TLSClientHandshake(
     rawInput: ByteReadChannel,
     rawOutput: ByteWriteChannel,
     private val config: TLSConfig,
-    override val coroutineContext: CoroutineContext
+    override val coroutineContext: CoroutineContext,
+    private val closeTask: CompletableJob = Job(),
 ) : CoroutineScope {
     private val digest = Digest()
     private val clientSeed: ByteArray = config.random.generateClientSeed()
@@ -99,34 +109,46 @@ internal class TLSClientHandshake(
         }
     }
 
+    var useCipher = false
+
     @OptIn(ObsoleteCoroutinesApi::class)
     val output: SendChannel<TLSRecord> = actor(CoroutineName("cio-tls-encoder")) {
-        var useCipher = false
+        for (rawRecord in channel) {
+            try {
+                val record = if (useCipher) cipher.encrypt(rawRecord) else rawRecord
+                if (rawRecord.type == TLSRecordType.ChangeCipherSpec) useCipher = true
 
-        try {
-            for (rawRecord in channel) {
+                rawOutput.writeRecord(record)
+            } catch (cause: Throwable) {
+                channel.close(cause)
+                break
+            }
+        }
+    }.apply {
+        invokeOnClose {
+            launch(CoroutineName("cio-tls-closer")) {
                 try {
-                    val record = if (useCipher) cipher.encrypt(rawRecord) else rawRecord
-                    if (rawRecord.type == TLSRecordType.ChangeCipherSpec) useCipher = true
-
+                    val closeRecord = TLSRecord(
+                        TLSRecordType.Alert,
+                        packet = buildPacket {
+                            writeByte(TLSAlertLevel.WARNING.code.toByte())
+                            writeByte(TLSAlertType.CloseNotify.code.toByte())
+                        }
+                    )
+                    val record = if (useCipher) cipher.encrypt(closeRecord) else closeRecord
                     rawOutput.writeRecord(record)
-                } catch (cause: Throwable) {
-                    channel.close(cause)
+                    rawOutput.flushAndClose()
+                } finally {
+                    closeTask.complete()
                 }
             }
-        } finally {
-            rawOutput.writeRecord(
-                TLSRecord(
-                    TLSRecordType.Alert,
-                    packet = buildPacket {
-                        writeByte(TLSAlertLevel.WARNING.code.toByte())
-                        writeByte(TLSAlertType.CloseNotify.code.toByte())
-                    }
-                )
-            )
-
-            rawOutput.close()
         }
+    }
+
+    fun close(): Job {
+        input.cancel()
+        output.close()
+        return closeTask
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -134,13 +156,13 @@ internal class TLSClientHandshake(
         while (true) {
             val record = input.receive()
             if (record.type != TLSRecordType.Handshake) {
-                record.packet.release()
+                record.packet.close()
                 error("TLS handshake expected, got ${record.type}")
             }
 
             val packet = record.packet
 
-            while (packet.isNotEmpty) {
+            while (!packet.exhausted()) {
                 val handshake = packet.readTLSHandshake()
                 if (handshake.type == TLSHandshakeType.HelloRequest) continue
                 if (handshake.type != TLSHandshakeType.Finished) {
@@ -150,7 +172,7 @@ internal class TLSClientHandshake(
                 channel.send(handshake)
 
                 if (handshake.type == TLSHandshakeType.Finished) {
-                    packet.release()
+                    packet.close()
                     return@produce
                 }
             }
@@ -233,21 +255,17 @@ internal class TLSClientHandshake(
 
                     val manager = config.trustManager
                     manager.checkServerTrusted(x509s.toTypedArray(), exchangeType.jvmName)
-
-                    serverCertificate = x509s.firstOrNull { certificate ->
-                        SupportedSignatureAlgorithms.any {
-                            val oid = it.oid?.identifier ?: return@any false
-                            oid.equals(certificate.sigAlgOID, ignoreCase = true)
-                        }
-                    } ?: throw TLSException("No suitable server certificate received: $certs")
+                    serverCertificate = x509s.first()
 
                     if (config.serverName != null) {
                         verifyHostnameInCertificate(config.serverName, serverCertificate)
                     }
                 }
+
                 TLSHandshakeType.CertificateRequest -> {
                     certificateInfo = readClientCertificateRequest(packet)
                 }
+
                 TLSHandshakeType.ServerKeyExchange -> {
                     when (exchangeType) {
                         ECDHE -> {
@@ -270,19 +288,19 @@ internal class TLSClientHandshake(
                                         writeFully(clientSeed)
                                         writeFully(serverHello.serverSeed)
                                         writePacket(params)
-                                    }.readBytes()
+                                    }.readByteArray()
                                 )
                             }
 
                             val signSize = packet.readShort().toInt() and 0xffff
-                            val signedMessage = packet.readBytes(signSize)
+                            val signedMessage = packet.readByteArray(signSize)
                             if (!signature.verify(signedMessage)) throw TLSException("Failed to verify signed message")
 
                             encryptionInfo = generateECKeys(curve, point)
                         }
 
                         RSA -> {
-                            packet.release()
+                            packet.close()
                             error("Server key exchange handshake doesn't expected in RCA exchange type")
                         }
                     }
@@ -387,9 +405,10 @@ internal class TLSClientHandshake(
 
             if (hasHashAndSignInCommon) return@find false
 
-            info.authorities.isEmpty() || candidate.certificateChain
-                .map { X500Principal(it.issuerX500Principal.name) }
-                .any { it in info.authorities }
+            info.authorities.isEmpty() ||
+                candidate.certificateChain
+                    .map { X500Principal(it.issuerX500Principal.name) }
+                    .any { it in info.authorities }
         }
 
         sendHandshakeRecord(TLSHandshakeType.Certificate) {
@@ -414,7 +433,7 @@ internal class TLSClientHandshake(
             writeByte(hashAndSign.hash.code)
             writeByte(hashAndSign.sign.code)
 
-            digest.state.preview { sign.update(it.readBytes()) }
+            digest.state.preview { sign.update(it.readByteArray()) }
             val signBytes = sign.sign()!!
 
             writeShort(signBytes.size.toShort())
@@ -427,7 +446,7 @@ internal class TLSClientHandshake(
         try {
             output.send(TLSRecord(TLSRecordType.ChangeCipherSpec, packet = packet))
         } catch (cause: Throwable) {
-            packet.release()
+            packet.close()
             throw cause
         }
     }
@@ -447,7 +466,7 @@ internal class TLSClientHandshake(
             throw TLSException("Finished handshake expected, received: $finished")
         }
 
-        val receivedChecksum = finished.packet.readBytes()
+        val receivedChecksum = finished.packet.readByteArray()
         val expectedChecksum = serverFinished(
             digest.doHash(serverHello.cipherSuite.hash.openSSLName),
             masterSecret,
@@ -464,7 +483,7 @@ internal class TLSClientHandshake(
         }
     }
 
-    private suspend fun sendHandshakeRecord(handshakeType: TLSHandshakeType, block: BytePacketBuilder.() -> Unit) {
+    private suspend fun sendHandshakeRecord(handshakeType: TLSHandshakeType, block: Sink.() -> Unit) {
         val handshakeBody = buildPacket(block = block)
 
         val recordBody = buildPacket {
@@ -477,7 +496,7 @@ internal class TLSClientHandshake(
         try {
             output.send(element)
         } catch (cause: Throwable) {
-            element.packet.release()
+            element.packet.close()
             throw cause
         }
     }
@@ -501,7 +520,6 @@ private fun generateECKeys(curve: NamedCurve, serverPoint: ECPoint): EncryptionI
         generateKeyPair()!!
     }
 
-    @Suppress("UNCHECKED_CAST")
     val publicKey = clientKeys.public as ECPublicKey
     val factory = KeyFactory.getInstance("EC")!!
     val serverPublic = factory.generatePublic(ECPublicKeySpec(serverPoint, publicKey.params!!))!!
@@ -518,9 +536,10 @@ private fun generateECKeys(curve: NamedCurve, serverPoint: ECPoint): EncryptionI
  *         DistinguishedName certificate_authorities<0..2^16-1>;
  *     } CertificateRequest;
  */
-internal fun readClientCertificateRequest(packet: ByteReadPacket): CertificateInfo {
+
+internal fun readClientCertificateRequest(packet: Source): CertificateInfo {
     val typeCount = packet.readByte().toInt() and 0xFF
-    val types = packet.readBytes(typeCount)
+    val types = packet.readByteArray(typeCount)
 
     val hashAndSignCount = packet.readShort().toInt() and 0xFFFF
     val hashAndSign = mutableListOf<HashAndSign>()
@@ -540,11 +559,11 @@ internal fun readClientCertificateRequest(packet: ByteReadPacket): CertificateIn
         val bytesForReadingSize = Short.SIZE_BYTES
         position += size + bytesForReadingSize
 
-        val authority = packet.readBytes(size)
+        val authority = packet.readByteArray(size)
         authorities += X500Principal(authority)
     }
 
     val certificateInfo = CertificateInfo(types, hashAndSign.toTypedArray(), authorities)
-    check(packet.isEmpty)
+    check(packet.exhausted())
     return certificateInfo
 }

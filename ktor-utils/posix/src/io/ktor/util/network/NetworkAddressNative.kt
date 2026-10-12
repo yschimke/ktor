@@ -1,30 +1,36 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.util.network
 
-import io.ktor.util.*
 import io.ktor.utils.io.*
-import kotlinx.atomicfu.*
+import kotlinx.atomicfu.AtomicRef
+import kotlinx.atomicfu.atomic
 
 /**
  * Represents remote endpoint with [hostname] and [port].
  *
  * The address will be resolved after construction.
  *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.network.NetworkAddress)
+ *
  * @throws UnresolvedAddressException if the [hostname] cannot be resolved.
  */
-public actual abstract class NetworkAddress constructor(
+public actual abstract class NetworkAddress(
     public val hostname: String,
     public val port: Int,
     explicitAddress: Any? = null
 ) {
+    private val _explicitAddress: AtomicRef<Any?> = atomic(explicitAddress)
+
     @InternalAPI
-    public var explicitAddress: AtomicRef<Any?> = atomic(explicitAddress)
+    public var explicitAddress: Any? by _explicitAddress
 
     /**
      * Resolve current socket address.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.network.NetworkAddress.toString)
      */
 
     override fun toString(): String = "NetworkAddress[$hostname:$port]"

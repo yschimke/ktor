@@ -1,49 +1,42 @@
-description = ""
+/*
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
-val jetty_alpn_boot_version: String? by extra
+description = "Test utilities for testing Ktor server applications without starting a real server"
 
-kotlin.sourceSets {
-    jvmAndNixMain {
-        dependencies {
-            api(project(":ktor-server:ktor-server-core"))
-            api(project(":ktor-client:ktor-client-core"))
-            api(project(":ktor-client:ktor-client-cio"))
-            api(project(":ktor-test-dispatcher"))
+plugins {
+    id("ktorbuild.project.library")
+}
+
+kotlin {
+    sourceSets {
+        commonMain.dependencies {
+            api(projects.ktorClientCio)
+            api(projects.ktorServerCore)
+            api(projects.ktorClientCore)
+            api(projects.ktorTestDispatcher)
         }
-    }
 
-    jvmMain {
-        dependencies {
-            api(project(":ktor-network:ktor-network-tls"))
+        commonTest.dependencies {
+            implementation(projects.ktorTestBase)
+        }
 
-            api(project(":ktor-client:ktor-client-apache"))
-            api(project(":ktor-network:ktor-network-tls:ktor-network-tls-certificates"))
-            api(project(":ktor-server:ktor-server-plugins:ktor-server-call-logging"))
+        jvmMain.dependencies {
+            api(projects.ktorNetworkTls)
+
+            api(projects.ktorClientApache5)
+            api(projects.ktorNetworkTlsCertificates)
+            api(projects.ktorServerCallLogging)
 
             // Not ideal, but prevents an additional artifact, and this is usually just included for testing,
-            // so shouldn"t increase the size of the final artifact.
-            api(project(":ktor-server:ktor-server-plugins:ktor-server-websockets"))
+            // so shouldn't increase the size of the final artifact.
+            api(projects.ktorServerWebsockets)
 
-            if (jetty_alpn_boot_version != null) {
-                api(libs.jetty.alpn.boot)
-            }
-
-            api(kotlin("test"))
-            api(libs.junit)
             implementation(libs.kotlinx.coroutines.debug)
         }
-    }
 
-    jvmTest {
-        dependencies {
-            api(project(":ktor-server:ktor-server-core", configuration = "testOutput"))
-            api(kotlin("test"))
-        }
-    }
-
-    jvmAndNixTest {
-        dependencies {
-            api(project(":ktor-server:ktor-server-config-yaml"))
+        jvmTest.dependencies {
+            implementation(projects.ktorServerConfigYaml)
         }
     }
 }

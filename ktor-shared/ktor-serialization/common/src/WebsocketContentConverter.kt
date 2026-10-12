@@ -1,13 +1,11 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.serialization
 
-import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.util.reflect.*
-import io.ktor.utils.io.*
 import io.ktor.utils.io.charsets.*
 import io.ktor.websocket.*
 
@@ -16,11 +14,15 @@ import io.ktor.websocket.*
  * Could provide bi-directional conversion implementation.
  * One of the most typical examples of the content converter is a JSON converter that provides
  * both serialization and deserialization
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.WebsocketContentConverter)
  */
 public interface WebsocketContentConverter {
     /**
      * Serializes a [value] to a WebSocket [Frame].
      * This function could throw `WebsocketConverterNotFoundException` if the value is not suitable for conversion
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.WebsocketContentConverter.serialize)
      *
      * @param charset response charset
      * @param typeInfo response body typeInfo
@@ -37,6 +39,8 @@ public interface WebsocketContentConverter {
     /**
      * Deserializes [content] to the value of type [typeInfo]
      *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.WebsocketContentConverter.deserialize)
+     *
      * @return a converted value (deserialized) or throws `WebsocketConverterNotFoundException` if the context's
      * subject is not suitable for this converter
      */
@@ -44,6 +48,8 @@ public interface WebsocketContentConverter {
 
     /**
      * Checks if the content converter can deserialize a [frame]
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.WebsocketContentConverter.isApplicable)
      *
      * @param frame a WebSocket frame
      *
@@ -57,6 +63,8 @@ public interface WebsocketContentConverter {
  * Serializes a [value] to a WebSocket [Frame].
  * This function could throw `WebsocketConverterNotFoundException` if the value is not suitable for conversion
  *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.serialize)
+ *
  * @param charset response charset
  * @param value to be converted
  *
@@ -69,6 +77,8 @@ public suspend inline fun <reified T> WebsocketContentConverter.serialize(
 
 /**
  * Deserializes [content] to the value of type [T]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.deserialize)
  *
  * @return a converted value (deserialized) or throws `WebsocketConverterNotFoundException` if the context's
  * subject is not suitable for this converter

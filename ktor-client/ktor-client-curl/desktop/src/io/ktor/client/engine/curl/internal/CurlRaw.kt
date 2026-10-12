@@ -1,6 +1,6 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.client.engine.curl.internal
 
@@ -11,15 +11,24 @@ import io.ktor.client.plugins.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.http.content.*
+import io.ktor.util.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.core.*
-import kotlinx.cinterop.*
-import kotlinx.coroutines.*
-import libcurl.*
-import kotlin.coroutines.*
+import kotlinx.cinterop.CPointer
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Job
+import libcurl.curl_slist
+import kotlin.coroutines.coroutineContext
 
-@OptIn(ExperimentalForeignApi::class)
-internal suspend fun HttpRequestData.toCurlRequest(config: CurlClientEngineConfig): CurlRequestData = CurlRequestData(
+@OptIn(ExperimentalForeignApi::class, InternalAPI::class)
+internal suspend fun HttpRequestData.toCurlRequest(
+    config: CurlClientEngineConfig,
+    callContext: Job,
+): CurlRequestData = CurlRequestData(
+    protocol = url.protocol.name,
     url = url.toString(),
     method = method.value,
     headers = headersToCurl(),
@@ -27,14 +36,17 @@ internal suspend fun HttpRequestData.toCurlRequest(config: CurlClientEngineConfi
     content = body.toByteChannel(),
     contentLength = body.contentLength ?: headers[HttpHeaders.ContentLength]?.toLongOrNull() ?: -1L,
     connectTimeout = getCapabilityOrNull(HttpTimeoutCapability)?.connectTimeoutMillis,
-    executionContext = executionContext,
+    callContext = callContext,
+    isUpgradeRequest = isUpgradeRequest(),
     forceProxyTunneling = config.forceProxyTunneling,
     sslVerify = config.sslVerify,
     caInfo = config.caInfo,
-    caPath = config.caPath
+    caPath = config.caPath,
+    attributes = attributes,
 )
 
 internal class CurlRequestData @OptIn(ExperimentalForeignApi::class) constructor(
+    val protocol: String,
     val url: String,
     val method: String,
     val headers: CPointer<curl_slist>,
@@ -42,31 +54,33 @@ internal class CurlRequestData @OptIn(ExperimentalForeignApi::class) constructor
     val content: ByteReadChannel,
     val contentLength: Long,
     val connectTimeout: Long?,
-    val executionContext: Job,
+    val callContext: Job,
+    val isUpgradeRequest: Boolean,
     val forceProxyTunneling: Boolean,
     val sslVerify: Boolean,
     val caInfo: String?,
-    val caPath: String?
+    val caPath: String?,
+    val attributes: Attributes
 ) {
     override fun toString(): String =
         "CurlRequestData(url='$url', method='$method', content: $contentLength bytes)"
 }
 
-internal class CurlResponseBuilder(val request: CurlRequestData) {
+internal class CurlResponseBuilder(
+    val request: CurlRequestData,
+    val bodyStartedReceiving: CompletableDeferred<Unit>,
+    val responseBody: CurlResponseBodyData
+) {
     val headersBytes = BytePacketBuilder()
-    val bodyChannel = ByteChannel(true).apply {
-        @Suppress("DEPRECATION")
-        attachJob(request.executionContext)
-    }
 }
 
 internal sealed class CurlResponseData
 
 internal class CurlSuccess(
     val status: Int,
-    val version: UInt,
+    val version: Long,
     val headersBytes: ByteArray,
-    val bodyChannel: ByteReadChannel
+    val responseBody: CurlResponseBodyData
 ) : CurlResponseData() {
     override fun toString(): String = "CurlSuccess(${HttpStatusCode.fromValue(status)})"
 }
@@ -89,7 +103,10 @@ internal suspend fun OutgoingContent.toByteChannel(): ByteReadChannel = when (th
     }.channel
 
     is OutgoingContent.ReadChannelContent -> readFrom()
+
     is OutgoingContent.NoContent -> ByteReadChannel.Empty
+
     is OutgoingContent.ContentWrapper -> delegate().toByteChannel()
+
     is OutgoingContent.ProtocolUpgrade -> throw UnsupportedContentTypeException(this@toByteChannel)
 }

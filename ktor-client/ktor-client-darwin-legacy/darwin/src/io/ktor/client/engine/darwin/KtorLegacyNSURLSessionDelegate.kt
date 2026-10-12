@@ -7,15 +7,18 @@ package io.ktor.client.engine.darwin
 import io.ktor.client.engine.darwin.internal.legacy.*
 import io.ktor.client.request.*
 import io.ktor.util.collections.*
-import kotlinx.cinterop.*
-import kotlinx.coroutines.*
+import kotlinx.cinterop.UnsafeNumber
+import kotlinx.coroutines.CompletableDeferred
 import platform.Foundation.*
-import platform.darwin.*
-import kotlin.coroutines.*
+import platform.darwin.NSObject
+import kotlin.coroutines.CoroutineContext
 
 /**
  * Creates an instance of [KtorLegacyNSURLSessionDelegate]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.KtorLegacyNSURLSessionDelegate)
  */
+@Suppress("DEPRECATION")
 @OptIn(UnsafeNumber::class)
 public fun KtorLegacyNSURLSessionDelegate(): KtorLegacyNSURLSessionDelegate {
     return KtorLegacyNSURLSessionDelegate(null)
@@ -26,31 +29,41 @@ public fun KtorLegacyNSURLSessionDelegate(): KtorLegacyNSURLSessionDelegate {
  * If users set custom session in [DarwinLegacyClientEngineConfig.sessionAndDelegate],
  * they need to register this delegate in their session.
  * This can be done by registering it directly,
- * extending their custom delegate from it
+ * extending their custom delegate from it,
  * or by calling required methods from their custom delegate.
  *
  * For HTTP requests to work property, it's important that users call these functions:
  *   * URLSession:dataTask:didReceiveData:
  *   * URLSession:task:didCompleteWithError:
  *   * URLSession:task:willPerformHTTPRedirection:newRequest:completionHandler:
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.KtorLegacyNSURLSessionDelegate)
  */
 @OptIn(UnsafeNumber::class)
+@Deprecated(
+    message = "DarwinLegacy engine is deprecated. Consider using KtorNSURLSessionDelegate from Darwin engine instead.",
+    replaceWith = ReplaceWith(
+        "KtorNSURLSessionDelegate",
+        "io.ktor.client.engine.darwin.KtorNSURLSessionDelegate"
+    ),
+    level = DeprecationLevel.WARNING
+)
 public class KtorLegacyNSURLSessionDelegate(
     internal val challengeHandler: ChallengeHandler?
 ) : NSObject(), NSURLSessionDataDelegateProtocol {
 
-    internal val taskHandlers: ConcurrentMap<NSURLSessionTask, DarwinLegacyTaskHandler> =
+    internal val taskHandlers: ConcurrentMap<ULong, DarwinLegacyTaskHandler> =
         ConcurrentMap(initialCapacity = 32)
 
     override fun URLSession(session: NSURLSession, dataTask: NSURLSessionDataTask, didReceiveData: NSData) {
-        val taskHandler = taskHandlers[dataTask] ?: return
+        val taskHandler = taskHandlers[dataTask.id] ?: return
         taskHandler.receiveData(dataTask, didReceiveData)
     }
 
     override fun URLSession(session: NSURLSession, task: NSURLSessionTask, didCompleteWithError: NSError?) {
-        val taskHandler = taskHandlers[task] ?: return
+        val taskHandler = taskHandlers[task.id] ?: return
         taskHandler.complete(task, didCompleteWithError)
-        taskHandlers.remove(task)
+        taskHandlers.remove(task.id)
     }
 
     internal fun read(
@@ -59,12 +72,14 @@ public class KtorLegacyNSURLSessionDelegate(
         task: NSURLSessionTask
     ): CompletableDeferred<HttpResponseData> {
         val taskHandler = DarwinLegacyTaskHandler(request, callContext)
-        taskHandlers.put(task, taskHandler)
+        taskHandlers[task.id] = taskHandler
         return taskHandler.response
     }
 
     /**
      * Disable embedded redirects.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.KtorLegacyNSURLSessionDelegate.URLSession)
      */
     override fun URLSession(
         session: NSURLSession,
@@ -78,6 +93,8 @@ public class KtorLegacyNSURLSessionDelegate(
 
     /**
      * Handle challenge.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.engine.darwin.KtorLegacyNSURLSessionDelegate.URLSession)
      */
     override fun URLSession(
         session: NSURLSession,

@@ -16,11 +16,15 @@ import io.ktor.server.plugins.partialcontent.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.test.base.*
+import io.ktor.util.logging.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.jvm.javaio.*
-import java.io.*
-import java.util.zip.*
-import kotlin.test.*
+import kotlinx.coroutines.job
+import java.io.ByteArrayInputStream
+import java.util.zip.GZIPInputStream
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 abstract class CompressionTestSuite<TEngine : ApplicationEngine, TConfiguration : ApplicationEngine.Configuration>(
     hostFactory: ApplicationEngineFactory<TEngine, TConfiguration>
@@ -28,9 +32,9 @@ abstract class CompressionTestSuite<TEngine : ApplicationEngine, TConfiguration 
 
     @OptIn(InternalAPI::class)
     @Test
-    fun testLocalFileContentWithCompression() {
+    fun testLocalFileContentWithCompression() = runTest {
         val file = loadTestFile()
-        testLog.trace("test file is $file")
+        testLog.trace("test file is {}", file)
 
         createAndStartServer {
             install(Compression)
@@ -41,16 +45,19 @@ abstract class CompressionTestSuite<TEngine : ApplicationEngine, TConfiguration 
 
         withUrl("/", { header(HttpHeaders.AcceptEncoding, "gzip") }) {
             assertEquals(200, status.value)
-            assertEquals(file.readText(), GZIPInputStream(content.toInputStream()).reader().use { it.readText() })
+            assertEquals(
+                file.readText(),
+                GZIPInputStream(rawContent.asInputStream(coroutineContext.job)).reader().use { it.readText() }
+            )
             assertEquals("gzip", headers[HttpHeaders.ContentEncoding])
         }
     }
 
     @OptIn(InternalAPI::class)
     @Test
-    fun testStreamingContentWithCompression() {
+    fun testStreamingContentWithCompression() = runTest {
         val file = loadTestFile()
-        testLog.trace("test file is $file")
+        testLog.trace { "test file is $file" }
 
         createAndStartServer {
             install(Compression)
@@ -67,15 +74,18 @@ abstract class CompressionTestSuite<TEngine : ApplicationEngine, TConfiguration 
 
         withUrl("/", { header(HttpHeaders.AcceptEncoding, "gzip") }) {
             assertEquals(200, status.value)
-            assertEquals("Hello!", GZIPInputStream(content.toInputStream()).reader().use { it.readText() })
+            assertEquals(
+                "Hello!",
+                GZIPInputStream(rawContent.asInputStream(coroutineContext.job)).reader().use { it.readText() },
+            )
             assertEquals("gzip", headers[HttpHeaders.ContentEncoding])
         }
     }
 
     @Test
-    fun testLocalFileContentRangeWithCompression() {
+    fun testLocalFileContentRangeWithCompression() = runTest {
         val file = loadTestFile()
-        testLog.trace("test file is $file")
+        testLog.trace { "test file is $file" }
 
         createAndStartServer {
             install(Compression)
@@ -106,7 +116,7 @@ abstract class CompressionTestSuite<TEngine : ApplicationEngine, TConfiguration 
     }
 
     @Test
-    fun testCompressionWriteToLarge() {
+    fun testCompressionWriteToLarge() = runTest {
         val count = 655350
         fun Appendable.produceText() {
             for (i in 1..count) {

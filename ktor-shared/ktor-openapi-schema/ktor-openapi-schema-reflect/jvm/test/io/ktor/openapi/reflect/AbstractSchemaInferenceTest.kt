@@ -1,0 +1,456 @@
+/*
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
+package io.ktor.openapi.reflect
+
+import com.charleskorn.kaml.SingleLineStringStyle
+import com.charleskorn.kaml.Yaml
+import com.charleskorn.kaml.YamlConfiguration
+import io.ktor.openapi.*
+import io.ktor.openapi.JsonSchema.*
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonClassDiscriminator
+import kotlin.reflect.typeOf
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
+
+abstract class AbstractSchemaInferenceTest(
+    val inference: JsonSchemaInference,
+    val overrideKey: String,
+) {
+    private val yaml = Yaml(
+        configuration = YamlConfiguration(
+            encodeDefaults = false,
+            singleLineStringStyle = SingleLineStringStyle.PlainExceptAmbiguous,
+            sequenceBlockIndent = 2,
+        )
+    )
+
+    @Test
+    fun `nested classes`() =
+        assertSchemaMatches<Address>()
+
+    @Test
+    fun `enum inference`() =
+        assertSchemaMatches<Color>()
+
+    @Test
+    fun `sealed type inference`() =
+        assertSchemaMatches<Shape>()
+
+    @Test
+    fun `custom discriminator annotation with serial names`() =
+        assertSchemaMatches<KindShape>()
+
+    @Test
+    fun `advanced container annotations`() =
+        assertSchemaMatches<ContainerTestData>()
+
+    @Test
+    fun `items ref annotation`() =
+        assertSchemaMatches<ItemsRefData>()
+
+    @Test
+    fun `prefix items ref annotation`() =
+        assertSchemaMatches<PrefixItemsRefData>()
+
+    @Test
+    fun `logical operators`() =
+        assertSchemaMatches<LogicalOperatorsData>()
+
+    @Test
+    fun `const inference`() {
+        val schema = inference.jsonSchema<ConstTestData>()
+        assertEquals(
+            "fixed-value",
+            schema.properties?.get("fixedString")?.valueOrNull()?.const?.asA<String>()
+        )
+        assertEquals(
+            42,
+            schema.properties?.get("fixedInt")?.valueOrNull()?.const?.asA<Int>()
+        )
+    }
+
+    @Test
+    fun `other validation rules`() {
+        assertSchemaMatches<AnnotatedUser>()
+        @OptIn(ExperimentalUuidApi::class, ExperimentalTime::class)
+        assertExampleMatches(
+            AnnotatedUser(
+                id = Uuid.parse("550e8400-e29b-41d4-a716-446655440000"),
+                username = "Timber Calhoun",
+                email = Email("tcalhoun@mail.com"),
+                createdAt = Instant.parse("2023-02-03T23:23:23Z")
+            )
+        )
+    }
+
+    @Test
+    fun `array inference`() {
+        val actualListOfSchema = listOf(
+            inference.jsonSchema<List<Address>>(),
+            inference.jsonSchema<Array<Address>>()
+        )
+        val elementSchema = inference.jsonSchema<Address>()
+        for (schema in actualListOfSchema) {
+            assertEquals(JsonType.ARRAY, schema.type)
+            assertEquals(elementSchema, schema.items?.valueOrNull())
+        }
+    }
+
+    @Test
+    fun `map inference`() {
+        val schema = inference.jsonSchema<Map<String, Address>>()
+        assertEquals(JsonType.OBJECT, schema.type)
+
+        val additional = schema.additionalProperties
+        assertNotNull(additional)
+
+        val valueSchema = when (additional) {
+            is AdditionalProperties.PSchema -> additional.value.valueOrNull()
+            is AdditionalProperties.Allowed -> null
+        }
+        assertNotNull(valueSchema)
+        assertEquals(JsonType.OBJECT, valueSchema.type)
+
+        // Spot-check that the value schema is for Address-like structure (not a generic object).
+        assertEquals(valueSchema.properties?.containsKey("street"), true)
+        assertEquals(valueSchema.required?.contains("street"), true)
+    }
+
+    @Test
+    fun `recursive inference`() {
+        val schema = inference.jsonSchema<TreeNode>()
+        val schemaYaml = yaml.encodeToString(schema)
+        assertEquals(
+            $$"""
+                type: object
+                title: io.ktor.openapi.reflect.TreeNode
+                required:
+                  - name
+                properties:
+                  name:
+                    type: string
+                  parent:
+                    oneOf:
+                      - $ref: "#/components/schemas/io.ktor.openapi.reflect.TreeNode"
+                      - type: "null"
+            """.trimIndent(),
+            schemaYaml
+        )
+    }
+
+    @Test
+    open fun `unsigned types`() =
+        assertSchemaMatches<UnsignedTypes>()
+
+    @OptIn(ExperimentalTime::class)
+    @Test
+    open fun `time types`() {
+        assertSchemaMatches<TimeTypes>()
+        assertExampleMatches(
+            TimeTypes(
+                Instant.parse("2023-02-03T23:23:23Z"),
+                17.days
+            )
+        )
+    }
+
+    @Test
+    fun `nested classes with lists produce correct schema`() {
+        val schema = inference.jsonSchema<OuterWithNestedLists>()
+
+        // The outer schema should have an "items" property that is an array
+        val itemsProp = schema.properties?.get("items")?.valueOrNull()
+        assertNotNull(itemsProp, "Expected 'items' property in schema")
+        assertEquals(JsonType.ARRAY, itemsProp.type)
+
+        // The items of that array should be an object (MiddleWithList), not a $ref to kotlin.collections.ArrayList
+        val middleSchema = itemsProp.items?.valueOrNull()
+        assertNotNull(middleSchema, "Expected items schema for MiddleWithList")
+        assertEquals(JsonType.OBJECT, middleSchema.type)
+
+        // MiddleWithList should have a "children" property that is an array
+        val childrenProp = middleSchema.properties?.get("children")?.valueOrNull()
+        assertNotNull(childrenProp, "Expected 'children' property in MiddleWithList schema")
+        assertEquals(JsonType.ARRAY, childrenProp.type)
+
+        // The items of "children" should be an object with "someValue" integer property,
+        // NOT a $ref to "kotlin.collections.ArrayList"
+        val leafSchema = childrenProp.items?.valueOrNull()
+        assertNotNull(leafSchema, "Expected items schema for LeafItem, got a \$ref instead")
+        assertEquals(JsonType.OBJECT, leafSchema.type)
+        assertNotNull(leafSchema.properties?.get("someValue"), "Expected 'someValue' property in LeafItem schema")
+    }
+
+    @Test
+    fun `recursive type in list does not stack overflow`() {
+        val schema = inference.jsonSchema<RecursiveNode>()
+        val schemaYaml = yaml.encodeToString(schema)
+        assertEquals(
+            $$"""
+                type: object
+                title: io.ktor.openapi.reflect.RecursiveNode
+                required:
+                  - name
+                  - children
+                properties:
+                  name:
+                    type: string
+                  children:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/io.ktor.openapi.reflect.RecursiveNode"
+            """.trimIndent(),
+            schemaYaml
+        )
+    }
+
+    @Test
+    fun `recursive class does not stack overflow`() =
+        assertSchemaMatches<BinaryExpression>()
+
+    @Test
+    fun `value classes`() =
+        assertSchemaMatches<Email>()
+
+    @Test
+    fun `nullable value classes`() {
+        assertEquals(nullableType(JsonType.STRING), inference.buildSchema(typeOf<String?>()).type)
+        assertEquals(JsonType.STRING, inference.buildSchema(typeOf<Email>()).type)
+        assertEquals(nullableType(JsonType.STRING), inference.buildSchema(typeOf<Email?>()).type)
+        assertEquals(nullableType(JsonType.STRING), inference.buildSchema(typeOf<NullableEmail>()).type)
+        assertEquals(nullableType(JsonType.INTEGER), inference.buildSchema(typeOf<Score?>()).type)
+    }
+
+    @Test
+    fun `nested generics`() =
+        assertSchemaMatches<Response<Page<Country>>>()
+
+    private inline fun <reified T : Any> assertSchemaMatches() {
+        val schema = inference.jsonSchema<T>()
+        val expected = readSchemaYaml<T>()
+        assertEquals(expected, yaml.encodeToString(schema))
+    }
+
+    private fun nullableType(type: JsonType): SchemaType =
+        SchemaType.AnyOf(listOf(type, JsonType.NULL))
+
+    private inline fun <reified T> readSchemaYaml(): String {
+        val standardFile = "/schema/${T::class.simpleName}.yaml"
+        val overrideFile = "/schema/${T::class.simpleName}.$overrideKey.yaml"
+        val resource = this.javaClass.getResource(overrideFile)
+            ?: this.javaClass.getResource(standardFile)
+            ?: error("Missing expected schema file: $standardFile")
+        return resource.readText().trim()
+    }
+
+    private inline fun <reified T> assertExampleMatches(value: T) {
+        val expectedFile = "/schema/${T::class.simpleName}.example.yaml"
+        val resource = this.javaClass.getResource(expectedFile)
+            ?: error("Missing expected schema file: $expectedFile")
+        assertEquals(resource.readText().trim(), yaml.encodeToString(value))
+    }
+}
+
+@Serializable
+sealed interface Location
+
+@Serializable
+data class Address(
+    @Minimum(value = 1.0, exclusive = false)
+    val houseNumber: Int,
+    @MinLength(1)
+    @MaxLength(4)
+    val apartment: String? = null,
+    val street: String,
+    val municipality: Municipality,
+    val postalCode: String
+) : Location
+
+@Serializable
+data class Municipality(
+    val city: String,
+    val province: String? = null,
+    val country: Country,
+) : Location
+
+@Serializable
+data class Country(
+    @Pattern("[A-Za-z'-,]+")
+    val name: String,
+    @Pattern("[A-Z]{3}")
+    val code: String,
+) : Location
+
+@Serializable
+enum class Color {
+    RED,
+    GREEN,
+    BLUE
+}
+
+@Serializable
+data class UnsignedTypes(
+    val unsignedInt: UInt,
+    val unsignedLong: ULong
+)
+
+@OptIn(ExperimentalTime::class)
+@Serializable
+data class TimeTypes(
+    val instant: Instant,
+    val duration: Duration
+)
+
+@Serializable
+sealed class Shape {
+    @Serializable
+    data class Circle(val radius: Double) : Shape()
+
+    @Serializable
+    data class Rectangle(val width: Double, val height: Double) : Shape()
+}
+
+@OptIn(ExperimentalUuidApi::class, ExperimentalTime::class)
+@Serializable
+data class AnnotatedUser(
+    @Description("The user's unique identifier")
+    val id: Uuid,
+    @MinLength(3)
+    @MaxLength(20)
+    @Pattern("^[a-z0-9_]+$")
+    val username: String,
+    @Pattern(".+@.+\\..+")
+    @Format("email")
+    val email: Email,
+    @ReadOnly
+    val createdAt: Instant
+)
+
+@Serializable
+data class ContainerTestData(
+    @UniqueItems
+    @MinItems(1)
+    val tags: List<String>,
+    @MaxProperties(5)
+    val metadata: Map<String, String>
+)
+
+@Serializable
+data class LogicalOperatorsData(
+    @OneOf(Address::class, Country::class)
+    val location: Location,
+    @Not(Color::class)
+    val nonColorValue: String
+)
+
+@Serializable
+data class TreeNode(
+    val name: String,
+    val parent: TreeNode?
+)
+
+@JvmInline
+@Serializable
+value class Email(val value: String)
+
+@JvmInline
+@Serializable
+value class NullableEmail(val value: String?)
+
+@JvmInline
+@Serializable
+value class Score(val value: Int)
+
+@Serializable
+data class ItemsRefData(
+    @ItemsRef(Country::class)
+    val locations: List<String>,
+)
+
+@Serializable
+data class PrefixItemsRefData(
+    @PrefixItemsRef(Address::class, Country::class)
+    val mixedTuple: List<String>,
+)
+
+@Serializable
+data class OuterWithNestedLists(
+    val items: List<MiddleWithList>
+)
+
+@Serializable
+data class MiddleWithList(
+    val children: List<LeafItem>
+)
+
+@Serializable
+data class LeafItem(
+    val someValue: Int
+)
+
+@Serializable
+data class RecursiveNode(
+    val name: String,
+    val children: List<RecursiveNode>
+)
+
+@Serializable
+sealed interface Expression
+
+@Serializable
+data class BinaryExpression(
+    val left: Expression,
+    val operator: String,
+    val right: Expression
+) : Expression
+
+@Serializable
+data class IntLiteral(val value: Int) : Expression
+
+@Serializable
+data class StringLiteral(val value: String) : Expression
+
+@Serializable
+data class Response<T>(
+    val data: T
+)
+
+@Serializable
+data class Page<out E>(
+    val items: List<E>,
+    val total: Int,
+)
+
+@OptIn(ExperimentalSerializationApi::class)
+@JsonClassDiscriminator("kind")
+@Serializable
+sealed interface KindShape {
+    @Serializable
+    @SerialName("circle")
+    data class Circle(val radius: Double) : KindShape
+
+    @Serializable
+    @SerialName("rectangle")
+    data class Rectangle(val width: Double, val height: Double) : KindShape
+}
+
+@Serializable
+data class ConstTestData(
+    @Const("\"fixed-value\"")
+    val fixedString: String,
+    @Const("42")
+    val fixedInt: Int
+)

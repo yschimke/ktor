@@ -1,0 +1,1350 @@
+/*
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
+package io.ktor.client.plugins.logging
+
+import io.ktor.client.*
+import io.ktor.client.engine.mock.*
+import io.ktor.client.plugins.*
+import io.ktor.client.plugins.compression.*
+import io.ktor.client.request.*
+import io.ktor.client.request.forms.*
+import io.ktor.client.statement.*
+import io.ktor.http.*
+import io.ktor.http.content.*
+import io.ktor.test.*
+import io.ktor.util.*
+import io.ktor.utils.io.*
+import kotlinx.coroutines.Job
+import kotlinx.io.Buffer
+import kotlinx.io.readByteArray
+import org.junit.jupiter.api.BeforeEach
+import java.net.UnknownHostException
+import kotlin.coroutines.CoroutineContext
+import kotlin.test.*
+
+class OkHttpFormatTest {
+    class LogRecorder : Logger {
+        private val loggedLines = mutableListOf<String>()
+        private var currentLine = 0
+        override fun log(message: String) {
+            loggedLines.addAll(message.lines())
+        }
+
+        fun assertLogEqual(msg: String): LogRecorder {
+            assertTrue(message = "No more logs to check") { currentLine < loggedLines.size }
+            assertEquals(
+                msg,
+                loggedLines[currentLine],
+                "Expected size ${msg.length}; actual size: ${loggedLines[currentLine].length}"
+            )
+            currentLine++
+            return this
+        }
+
+        fun assertLogMatch(regex: Regex): LogRecorder {
+            assertTrue(message = "No more logs to check") { currentLine < loggedLines.size }
+            assertTrue(message = "Regex '$regex' doesn't match '${loggedLines[currentLine]}'") {
+                regex.matches(
+                    loggedLines[currentLine]
+                )
+            }
+            currentLine++
+            return this
+        }
+
+        fun assertNoMoreLogs(): LogRecorder {
+            assertTrue(
+                message = "There are ${loggedLines.size - currentLine} more logs, expected none"
+            ) { currentLine >= loggedLines.size }
+            return this
+        }
+    }
+
+    private lateinit var log: LogRecorder
+
+    @BeforeEach
+    fun setup() {
+        log = LogRecorder()
+    }
+
+    @Test
+    fun noLoggingWhenLevelNone() = testWithLevel(LogLevel.NONE, handle = { respondWithLength() }) { client ->
+        client.get("/")
+        log.assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicGet() = testWithLevel(LogLevel.INFO, handle = { respondWithLength() }) { client ->
+        client.get("/")
+
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicPost() = testWithLevel(LogLevel.INFO, handle = { respondWithLength() }) { client ->
+        client.post("/") {
+            setBody("hello")
+        }
+
+        log.assertLogEqual("--> POST http://localhost/ (5-byte body)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicGet404() = testWithLevel(
+        LogLevel.INFO,
+        handle = { respondWithLength("", HttpStatusCode.NotFound) }
+    ) { client ->
+        client.get("/")
+
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogMatch(Regex("""<-- 404 Not Found http://localhost/ \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicGetNonRoot() = testWithLevel(LogLevel.INFO, handle = { respondWithLength() }) { client ->
+        client.get("/some/resource")
+
+        log.assertLogEqual("--> GET http://localhost/some/resource")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/some/resource \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicGetQuery() = testWithLevel(LogLevel.INFO, handle = { respondWithLength() }) { client ->
+        client.get("/?a=1&b=2&c=3")
+
+        log.assertLogEqual("--> GET http://localhost?a=1&b=2&c=3")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost\?a=1&b=2&c=3 \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicGetNonEmptyBody() = testWithLevel(LogLevel.INFO, handle = { respondWithLength("hello") }) { client ->
+        client.get("/")
+
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, 5-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicPostNoBody() = testWithLevel(LogLevel.INFO, handle = { respondWithLength() }) { client ->
+        client.post("/")
+
+        log.assertLogEqual("--> POST http://localhost/ (0-byte body)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicPostUpgradeProtocol() = testWithLevel(LogLevel.INFO, handle = { respondWithLength() }) { client ->
+        client.post("/") {
+            setBody(object : OutgoingContent.ProtocolUpgrade() {
+                override suspend fun upgrade(
+                    input: ByteReadChannel,
+                    output: ByteWriteChannel,
+                    engineContext: CoroutineContext,
+                    userContext: CoroutineContext
+                ): Job {
+                    output.flushAndClose()
+                    return Job()
+                }
+            })
+        }
+
+        log.assertLogEqual("--> POST http://localhost/ (0-byte body)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicPostReadChannel() = testWithLevel(LogLevel.INFO, handle = { respondWithLength() }) { client ->
+        client.post("/") {
+            setBody(object : OutgoingContent.ReadChannelContent() {
+                override fun readFrom() = ByteReadChannel("hello world")
+            })
+        }
+
+        log.assertLogEqual("--> POST http://localhost/ (unknown-byte body)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicPostReadChannelWithContentLength() = testWithLevel(
+        LogLevel.INFO,
+        handle = { respondWithLength() }
+    ) { client ->
+        client.post("/") {
+            setBody(object : OutgoingContent.ReadChannelContent() {
+                override val contentLength: Long
+                    get() = 11
+                override fun readFrom() = ByteReadChannel("hello world")
+            })
+        }
+
+        log.assertLogEqual("--> POST http://localhost/ (11-byte body)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicPostConsumedRequestBody() = testWithLevel(LogLevel.INFO, handle = {
+        respondWithLength(it.body.toByteReadPacket().readByteArray())
+    }) { client ->
+        val response = client.post("/") {
+            setBody(ByteReadChannel("hello"))
+        }
+
+        assertEquals("hello", response.bodyAsText())
+
+        log.assertLogEqual("--> POST http://localhost/ (unknown-byte body)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, 5-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicPostWriteChannel() = testWithLevel(LogLevel.INFO, handle = { respondWithLength() }) { client ->
+        client.post("/") {
+            setBody(object : OutgoingContent.WriteChannelContent() {
+                override suspend fun writeTo(channel: ByteWriteChannel) {
+                    channel.writeStringUtf8("hello world")
+                }
+            })
+        }
+
+        log.assertLogEqual("--> POST http://localhost/ (unknown-byte body)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicPostWriteChannelWithContentLength() = testWithLevel(
+        LogLevel.INFO,
+        handle = { respondWithLength() }
+    ) { client ->
+        client.post("/") {
+            setBody(object : OutgoingContent.WriteChannelContent() {
+                override suspend fun writeTo(channel: ByteWriteChannel) {
+                    channel.writeStringUtf8("hello world")
+                }
+                override val contentLength: Long
+                    get() = 11
+            })
+        }
+
+        log.assertLogEqual("--> POST http://localhost/ (11-byte body)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicGetWithResponseContentLength() = testWithLevel(LogLevel.INFO, handle = {
+        respond("", headers = Headers.build { append(HttpHeaders.ContentLength, "10") })
+    }) { client ->
+        client.prepareGet("/").execute {
+            log.assertLogEqual("--> GET http://localhost/")
+                .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, 10-byte body\)"""))
+                .assertNoMoreLogs()
+        }
+    }
+
+    @Test
+    fun basicGzippedBody() = testWithLevel(LogLevel.INFO, handle = {
+        val channel = GZipEncoder.encode(ByteReadChannel("a".repeat(1024)))
+        respond(
+            channel,
+            headers = Headers.build {
+                append(HttpHeaders.ContentEncoding, "gzip")
+                append(HttpHeaders.ContentLength, "29")
+            }
+        )
+    }) { client ->
+        client.prepareGet("/").execute {
+            log.assertLogEqual("--> GET http://localhost/")
+                .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, 29-byte body\)"""))
+                .assertNoMoreLogs()
+        }
+    }
+
+    @Test
+    fun basicGzippedBodyContentEncoding() = runTest {
+        HttpClient(MockEngine) {
+            install(Logging) {
+                level = LogLevel.INFO
+                logger = log
+                format = LoggingFormat.OkHttp
+            }
+            install(ContentEncoding) { gzip() }
+
+            engine {
+                addHandler {
+                    val channel = GZipEncoder.encode(ByteReadChannel("a".repeat(1024)))
+                    respond(
+                        channel,
+                        headers = Headers.build {
+                            append(HttpHeaders.ContentEncoding, "gzip")
+                            append(HttpHeaders.ContentLength, "29")
+                        }
+                    )
+                }
+            }
+        }.use { client ->
+            val response = client.get("/")
+            assertEquals("a".repeat(1024), response.bodyAsText())
+
+            log.assertLogEqual("--> GET http://localhost/")
+                .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+                .assertNoMoreLogs()
+        }
+    }
+
+    @Test
+    fun basicChunkedResponseBody() = testWithLevel(LogLevel.INFO, handle = {
+        respond(
+            ByteReadChannel("test"),
+            headers = Headers.build {
+                append(HttpHeaders.TransferEncoding, "chunked")
+            }
+        )
+    }) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, unknown-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun headersGet() = testWithLevel(LogLevel.HEADERS, handle = { respondWithLength() }) { client ->
+        client.get("/")
+
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogEqual("<-- END HTTP")
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun headersPost() = testWithLevel(LogLevel.HEADERS, handle = { respondWithLength() }) { client ->
+        client.post("/post") {
+            setBody(TextContent(text = "hello", contentType = ContentType.Text.Plain))
+        }
+
+        log.assertLogEqual("--> POST http://localhost/post")
+            .assertLogEqual("Content-Type: text/plain")
+            .assertLogEqual("Content-Length: 5")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END POST")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/post \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogEqual("<-- END HTTP")
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun headersNoLength() = testWithLevel(LogLevel.HEADERS, handle = { respondWithLength() }) { client ->
+        client.post("/post") {
+            setBody(object : OutgoingContent.WriteChannelContent() {
+                override suspend fun writeTo(channel: ByteWriteChannel) {
+                    channel.writeStringUtf8("test")
+                }
+            })
+        }
+
+        log.assertLogEqual("--> POST http://localhost/post")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END POST")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/post \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogEqual("<-- END HTTP")
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun customHeaders() = testWithLevel(LogLevel.HEADERS, handle = {
+        respondWithLength(
+            "hello",
+            headers = Headers.build {
+                append("Custom-Response", "value")
+            }
+        )
+    }) { client ->
+        client.get("/") {
+            setBody(TextContent(text = "hello", contentType = ContentType.Text.Plain))
+            header("Custom-Request", "value")
+        }
+
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Custom-Request: value")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Custom-Response: value")
+            .assertLogEqual("Content-Length: 5")
+            .assertLogEqual("Content-Type: text/plain")
+            .assertLogEqual("<-- END HTTP")
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun headersResponseBody() = testWithLevel(LogLevel.HEADERS, handle = {
+        respondWithLength("test", contentType = ContentType.Text.Html)
+    }) { client ->
+        client.get("/")
+
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 4")
+            .assertLogEqual("Content-Type: text/html")
+            .assertLogEqual("<-- END HTTP")
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun noBodiesSizesWhenHasContentLengths() = testWithLevel(LogLevel.HEADERS, handle = {
+        respondWithLength("bye")
+    }) { client ->
+        client.post("/") {
+            setBody(TextContent(text = "hello", contentType = ContentType.Text.Plain))
+        }
+
+        log.assertLogEqual("--> POST http://localhost/")
+            .assertLogEqual("Content-Type: text/plain")
+            .assertLogEqual("Content-Length: 5")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END POST")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 3")
+            .assertLogEqual("Content-Type: text/plain")
+            .assertLogEqual("<-- END HTTP")
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun headersGzippedResponseBody() = testWithLevel(LogLevel.HEADERS, handle = {
+        val content = "a".repeat(1024)
+        val channel = GZipEncoder.encode(ByteReadChannel(content))
+        respond(
+            channel,
+            headers = Headers.build {
+                append(HttpHeaders.ContentEncoding, "gzip")
+                append(HttpHeaders.ContentLength, "29")
+            }
+        )
+    }) { client ->
+        client.get("/")
+
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Encoding: gzip")
+            .assertLogEqual("Content-Length: 29")
+            .assertLogEqual("<-- END HTTP")
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun headersGzippedResponseBodyContentEncoding() = runTest {
+        HttpClient(MockEngine) {
+            install(Logging) {
+                level = LogLevel.HEADERS
+                logger = log
+                format = LoggingFormat.OkHttp
+            }
+            install(ContentEncoding) { gzip() }
+
+            engine {
+                addHandler {
+                    val channel = GZipEncoder.encode(ByteReadChannel("a".repeat(1024)))
+                    respond(
+                        channel,
+                        headers = Headers.build {
+                            append(HttpHeaders.ContentEncoding, "gzip")
+                        }
+                    )
+                }
+            }
+        }.use { client ->
+            client.post("/")
+
+            log.assertLogEqual("--> POST http://localhost/")
+                .assertLogEqual("Accept-Encoding: gzip")
+                .assertLogEqual("Accept: */*")
+                .assertLogEqual("--> END POST")
+                .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, unknown-byte body\)"""))
+                .assertLogEqual("<-- END HTTP")
+                .assertNoMoreLogs()
+        }
+    }
+
+    @Test
+    fun bodyGzippedResponseBody() = testWithLevel(LogLevel.BODY, handle = {
+        val channel = GZipEncoder.encode(ByteReadChannel("response".repeat(1024)))
+        respond(
+            channel,
+            headers = Headers.build {
+                append(HttpHeaders.ContentEncoding, "gzip")
+                append(HttpHeaders.ContentLength, "55")
+            }
+        )
+    }) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Encoding: gzip")
+            .assertLogEqual("Content-Length: 55")
+            .assertLogEqual("")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, encoded 55-byte body omitted\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyResponseBodyBrEncoded() = testWithLevel(LogLevel.BODY, handle = {
+        respond(
+            byteArrayOf(0xC3.toByte(), 0x28),
+            headers = Headers.build {
+                append(HttpHeaders.ContentEncoding, "br")
+                append(HttpHeaders.ContentLength, "2")
+            }
+        )
+    }) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Encoding: br")
+            .assertLogEqual("Content-Length: 2")
+            .assertLogEqual("")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, encoded 2-byte body omitted\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun detectResponseBodyAsTextualFor2ByteNonValidUTF8String() = testWithLevel(LogLevel.BODY, handle = {
+        respond(
+            byteArrayOf(0xC3.toByte(), 0x28),
+            headers = Headers.build {
+                append(HttpHeaders.ContentLength, "2")
+            }
+        )
+    }) { client ->
+
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 2")
+            .assertLogEqual("")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, binary 2-byte body omitted\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyGzippedResponseBodyContentEncoding() = runTest {
+        HttpClient(MockEngine) {
+            install(Logging) {
+                level = LogLevel.BODY
+                logger = log
+                format = LoggingFormat.OkHttp
+            }
+            install(ContentEncoding) { gzip() }
+
+            engine {
+                addHandler {
+                    val channel = GZipEncoder.encode(ByteReadChannel("response".repeat(1024)))
+                    respond(channel, headers = Headers.build { append(HttpHeaders.ContentEncoding, "gzip") })
+                }
+            }
+        }.use { client ->
+            client.get("/")
+
+            log.assertLogEqual("--> GET http://localhost/")
+                .assertLogEqual("Accept-Encoding: gzip")
+                .assertLogEqual("Accept: */*")
+                .assertLogEqual("--> END GET")
+                .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+                .assertLogEqual("")
+                .assertLogEqual("response".repeat(1024))
+                .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 8192-byte body\)"""))
+                .assertNoMoreLogs()
+        }
+    }
+
+    @Test
+    fun bodyGet() = testWithLevel(LogLevel.BODY, handle = { respondWithLength() }) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyGet204() = testWithLevel(LogLevel.BODY, handle = {
+        respond(
+            "",
+            status = HttpStatusCode.NoContent,
+            headers = Headers.build {
+                append(HttpHeaders.ContentLength, "0")
+            }
+        )
+    }) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 204 No Content http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyGet205() = testWithLevel(LogLevel.BODY, handle = {
+        respond(
+            "",
+            status = HttpStatusCode.ResetContent,
+            headers = Headers.build {
+                append(HttpHeaders.ContentLength, "0")
+            }
+        )
+    }) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 205 Reset Content http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyPost() = testWithLevel(LogLevel.BODY, handle = { respondWithLength() }) { client ->
+        client.post("/") {
+            setBody("test")
+        }
+        log.assertLogEqual("--> POST http://localhost/")
+            .assertLogEqual("Content-Type: text/plain; charset=UTF-8")
+            .assertLogEqual("Content-Length: 4")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("")
+            .assertLogEqual("test")
+            .assertLogEqual("--> END POST (4-byte body)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyPostReadChannel() = testWithLevel(LogLevel.BODY, handle = { respondWithLength() }) { client ->
+        client.post("/") {
+            setBody(ByteReadChannel("test"))
+            contentType(ContentType.Text.Plain)
+        }
+        log.assertLogEqual("--> POST http://localhost/ (unknown-byte body)")
+            .assertLogEqual("Content-Type: text/plain")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("")
+            .assertLogEqual("test")
+            .assertLogEqual("--> END POST (4-byte body)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyPostReadChannelNotConsumed() = testWithLevel(LogLevel.BODY, handle = {
+        assertEquals("test", it.body.toByteReadPacket().readText())
+        respondWithLength()
+    }) { client ->
+        client.post("/") {
+            setBody(ByteReadChannel("test"))
+            contentType(ContentType.Text.Plain)
+        }
+        log.assertLogEqual("--> POST http://localhost/ (unknown-byte body)")
+            .assertLogEqual("Content-Type: text/plain")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("")
+            .assertLogEqual("test")
+            .assertLogEqual("--> END POST (4-byte body)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyPostBinaryReadChannel() = testWithLevel(LogLevel.BODY, handle = { respondWithLength() }) { client ->
+        client.post("/") {
+            setBody(ByteReadChannel(byteArrayOf(0xC3.toByte(), 0x28)))
+        }
+        log.assertLogEqual("--> POST http://localhost/ (unknown-byte body)")
+            .assertLogEqual("Content-Type: application/octet-stream")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("")
+            .assertLogEqual("--> END POST (binary body omitted)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyPostBinaryWriteChannel() = testWithLevel(LogLevel.BODY, handle = { respondWithLength() }) { client ->
+        client.post("/") {
+            setBody(object : OutgoingContent.WriteChannelContent() {
+                override suspend fun writeTo(channel: ByteWriteChannel) {
+                    channel.writeFully(byteArrayOf(0xC3.toByte(), 0x28))
+                    channel.flushAndClose()
+                }
+            })
+        }
+        log.assertLogEqual("--> POST http://localhost/ (unknown-byte body)")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("")
+            .assertLogEqual("--> END POST (binary body omitted)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyPostBinaryArrayContent() = testWithLevel(LogLevel.BODY, handle = { respondWithLength() }) { client ->
+        client.post("/") {
+            setBody(object : OutgoingContent.ByteArrayContent() {
+                override fun bytes(): ByteArray {
+                    return byteArrayOf(0xC3.toByte(), 0x28)
+                }
+            })
+        }
+        log.assertLogEqual("--> POST http://localhost/ (2-byte body)")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("")
+            .assertLogEqual("--> END POST (binary 2-byte body omitted)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyGetWithResponseBody() = testWithLevel(LogLevel.BODY, handle = { respondWithLength("hello!") }) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 6")
+            .assertLogEqual("Content-Type: text/plain")
+            .assertLogEqual("")
+            .assertLogEqual("hello!")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 6-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyResponseBodyChunked() = testWithLevel(
+        LogLevel.BODY,
+        handle = { respondChunked(ByteReadChannel("hello!")) }
+    ) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Transfer-Encoding: chunked")
+            .assertLogEqual("Content-Type: text/plain")
+            .assertLogEqual("")
+            .assertLogEqual("hello!")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 6-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyResponseIsStreaming() = testWithLevel(LogLevel.BODY, handle = {
+        respondChunked(
+            ByteReadChannel(
+                """
+          |event: add
+          |data: 73857293
+          |
+          |event: remove
+          |data: 2153
+          |
+          |event: add
+          |data: 113411
+          |
+          |
+                """.trimMargin()
+            ),
+            contentType = ContentType.Text.EventStream
+        )
+    }) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Transfer-Encoding: chunked")
+            .assertLogEqual("Content-Type: text/event-stream")
+            .assertLogEqual("<-- END HTTP (streaming)")
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyGetMalformedCharset() = testWithLevel(LogLevel.BODY, handle = {
+        respond(
+            "test",
+            headers = Headers.build {
+                append(HttpHeaders.ContentType, "text/html; charset=0")
+            }
+        )
+    }) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Type: text/html; charset=0")
+            .assertLogEqual("")
+            .assertLogEqual("test")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 4-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyResponseBodyIsBinary() = testWithLevel(LogLevel.BODY, handle = {
+        respond(
+            byteArrayOf((0x89).toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+            headers = Headers.build {
+                append(HttpHeaders.ContentType, "image/png; charset=utf-8")
+            }
+        )
+    }) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Type: image/png; charset=utf-8")
+            .assertLogEqual("")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, binary body omitted\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyResponseBodyIsBinaryContentLength() = testWithLevel(LogLevel.BODY, handle = {
+        val data = byteArrayOf((0x89).toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+        respond(
+            data,
+            headers = Headers.build {
+                append(HttpHeaders.ContentType, "image/png; charset=utf-8")
+                append(HttpHeaders.ContentLength, data.size.toString())
+            }
+        )
+    }) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Type: image/png; charset=utf-8")
+            .assertLogEqual("Content-Length: 8")
+            .assertLogEqual("")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, binary 8-byte body omitted\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun allResponseBody() = testWithLevel(LogLevel.ALL, handle = { respondWithLength("hello!") }) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 6")
+            .assertLogEqual("Content-Type: text/plain")
+            .assertLogEqual("")
+            .assertLogEqual("hello!")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 6-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun connectFailed() = testWithLevel(LogLevel.INFO, handle = { respondOk() }) { client ->
+        client.sendPipeline.intercept(HttpSendPipeline.Engine) {
+            throw UnknownHostException("reason")
+        }
+
+        assertFailsWith<UnknownHostException> {
+            client.get("/")
+        }
+
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("<-- HTTP FAILED: java.net.UnknownHostException: reason")
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun headersAreRedacted() = runTest {
+        HttpClient(MockEngine) {
+            install(Logging) {
+                level = LogLevel.HEADERS
+                logger = log
+                format = LoggingFormat.OkHttp
+                sanitizeHeader { it == "SeNsItIvE" }
+            }
+
+            engine {
+                addHandler {
+                    respondWithLength(
+                        "",
+                        headers = Headers.build {
+                            append("SeNsItIvE", "value")
+                            append("Not-Sensitive", "value")
+                        }
+                    )
+                }
+            }
+        }.use { client ->
+            client.get("/") {
+                header("SeNsItIvE", "value")
+                header("Not-Sensitive", "value")
+            }
+            log.assertLogEqual("--> GET http://localhost/")
+                .assertLogEqual("SeNsItIvE: ██")
+                .assertLogEqual("Not-Sensitive: value")
+                .assertLogEqual("Accept: */*")
+                .assertLogEqual("--> END GET")
+                .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+                .assertLogEqual("SeNsItIvE: ██")
+                .assertLogEqual("Not-Sensitive: value")
+                .assertLogEqual("Content-Length: 0")
+                .assertLogEqual("Content-Type: text/plain")
+                .assertLogEqual("<-- END HTTP")
+                .assertNoMoreLogs()
+        }
+    }
+
+    @Test
+    fun responseValidatorReceivesResponseBody() = runTest {
+        HttpClient(MockEngine) {
+            install(Logging) {
+                level = LogLevel.BODY
+                logger = log
+                format = LoggingFormat.OkHttp
+            }
+
+            HttpResponseValidator {
+                validateResponse { response ->
+                    response.bodyAsText()
+                }
+            }
+
+            engine {
+                addHandler {
+                    respondWithLength("response body")
+                }
+            }
+        }.use { client ->
+            val response = client.get("/")
+            assertEquals("response body", response.bodyAsText())
+
+            log.assertLogEqual("--> GET http://localhost/")
+                .assertLogEqual("Accept: */*")
+                .assertLogEqual("--> END GET")
+                .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+                .assertLogEqual("Content-Length: 13")
+                .assertLogEqual("Content-Type: text/plain")
+                .assertLogEqual("")
+                .assertLogEqual("response body")
+                .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 13-byte body\)"""))
+                .assertNoMoreLogs()
+        }
+    }
+
+    @Test
+    fun sizeInBytesForUtf8ResponseBody() = testWithLevel(
+        LogLevel.BODY,
+        handle = { respondWithLength("привет") }
+    ) { client ->
+        client.get("/")
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 12")
+            .assertLogEqual("Content-Type: text/plain")
+            .assertLogEqual("")
+            .assertLogEqual("привет")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 12-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyGzippedRequestBodyContentLength() = testWithLevel(
+        LogLevel.BODY,
+        handle = { respondWithLength() }
+    ) { client ->
+        client.post("/") {
+            header(HttpHeaders.ContentEncoding, "gzip")
+            setBody(object : OutgoingContent.ReadChannelContent() {
+                override fun readFrom(): ByteReadChannel {
+                    return GZipEncoder.encode(ByteReadChannel("a".repeat(1024)))
+                }
+
+                override val contentLength: Long
+                    get() = 29
+            })
+        }
+        log.assertLogEqual("--> POST http://localhost/")
+            .assertLogEqual("Content-Length: 29")
+            .assertLogEqual("Content-Encoding: gzip")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("")
+            .assertLogEqual("--> END POST (encoded 29-byte body omitted)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyGzippedRequestBody() = testWithLevel(LogLevel.BODY, handle = { respondWithLength() }) { client ->
+        client.post("/") {
+            header(HttpHeaders.ContentEncoding, "gzip")
+            setBody(object : OutgoingContent.ReadChannelContent() {
+                override fun readFrom(): ByteReadChannel {
+                    return GZipEncoder.encode(ByteReadChannel("a".repeat(1024)))
+                }
+            })
+        }
+        log.assertLogEqual("--> POST http://localhost/")
+            .assertLogEqual("Content-Encoding: gzip")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("")
+            .assertLogEqual("--> END POST (encoded body omitted)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun basicGzippedRequestBody() = testWithLevel(LogLevel.INFO, handle = { respondWithLength() }) { client ->
+        client.post("/") {
+            header(HttpHeaders.ContentEncoding, "gzip")
+            setBody(object : OutgoingContent.ReadChannelContent() {
+                override fun readFrom(): ByteReadChannel {
+                    return GZipEncoder.encode(ByteReadChannel("a".repeat(1024)))
+                }
+            })
+        }
+
+        log.assertLogEqual("--> POST http://localhost/")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyHead() = testWithLevel(LogLevel.BODY, handle = { respondWithLength() }) { client ->
+        client.head("/")
+
+        log.assertLogEqual("--> HEAD http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END HEAD")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyEmptyPost() = testWithLevel(LogLevel.BODY, handle = { respondWithLength() }) { client ->
+        client.post("/")
+
+        log.assertLogEqual("--> POST http://localhost/ (0-byte body)")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("")
+            .assertLogEqual("--> END POST")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bodyEmptyResponseBody() = testWithLevel(LogLevel.BODY, handle = { respondWithLength() }) { client ->
+        client.get("/")
+
+        log.assertLogEqual("--> GET http://localhost/")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END GET")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun binaryBodiesIntegrity() = testWithLevel(LogLevel.BODY, handle = {
+        assertContentEquals(genBinary(7777), it.body.toByteArray())
+        respondWithLength(genBinary(10 * 1024), contentType = ContentType.Application.OctetStream)
+    }) { client ->
+        val data = client.post("/") {
+            setBody(genBinary(7777))
+        }.bodyAsBytes()
+
+        assertContentEquals(genBinary(10 * 1024), data)
+
+        log.assertLogEqual("--> POST http://localhost/")
+            .assertLogEqual("Content-Type: application/octet-stream")
+            .assertLogEqual("Content-Length: 7777")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("")
+            .assertLogEqual("--> END POST (binary 7777-byte body omitted)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 10240")
+            .assertLogEqual("Content-Type: application/octet-stream")
+            .assertLogEqual("")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, binary 10240-byte body omitted\)"""))
+            .assertNoMoreLogs()
+    }
+
+    private fun genBinary(size: Int): ByteArray {
+        return ByteArray(size) {
+            if (it % 2 == 0) {
+                0xC3.toByte()
+            } else {
+                0x28
+            }
+        }
+    }
+
+    @Test
+    fun headersGzippedRequestBody() = testWithLevel(LogLevel.HEADERS, handle = { respondWithLength() }) { client ->
+        client.post("/") {
+            header(HttpHeaders.ContentEncoding, "gzip")
+            setBody(object : OutgoingContent.ReadChannelContent() {
+                override fun readFrom(): ByteReadChannel {
+                    return GZipEncoder.encode(ByteReadChannel("a".repeat(1024)))
+                }
+            })
+        }
+
+        log.assertLogEqual("--> POST http://localhost/")
+            .assertLogEqual("Content-Encoding: gzip")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("--> END POST")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogEqual("<-- END HTTP")
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun bigTextPayloadsWithoutContentType() = testWithLevel(LogLevel.BODY, handle = {
+        respond(
+            "a".repeat(16 * 1024 * 1024).toByteArray(),
+            headers = Headers.build {
+                append("Content-Length", (16 * 1024 * 1024).toString(10))
+            }
+        )
+    }) { client ->
+        client.post("/") {
+            setBody(object : OutgoingContent.ByteArrayContent() {
+                override fun bytes(): ByteArray = "b".repeat(8 * 1024 * 1024).toByteArray()
+            })
+            headers.append("Content-Length", (8 * 1024 * 1024).toString(10))
+        }
+
+        log.assertLogEqual("--> POST http://localhost/")
+            .assertLogEqual("Content-Length: 8388608")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("")
+            .assertLogEqual("b".repeat(8 * 1024 * 1024))
+            .assertLogEqual("--> END POST (8388608-byte body)")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 16777216")
+            .assertLogEqual("")
+            .assertLogEqual("a".repeat(16 * 1024 * 1024))
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 16777216-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    @Test
+    fun multipartBinaryBody() = testWithLevel(LogLevel.BODY, handle = {
+        respond(
+            "",
+            headers = Headers.build {
+                append("Content-Length", "0")
+            }
+        )
+    }) { client ->
+        val size = 10 * 1024 * 1024L
+        val data = Buffer().apply {
+            write(ByteArray(size.toInt()))
+        }
+        client.post("/") {
+            setBody(
+                MultiPartFormDataContent(
+                    formData {
+                        append("description", "simple description")
+                        append(
+                            "image",
+                            InputProvider(size) {
+                                data
+                            },
+                            Headers.build {
+                                append(HttpHeaders.ContentType, "image/png")
+                                append(HttpHeaders.ContentDisposition, "filename=\"sample_image.jpg\"")
+                            }
+                        )
+                        append("binary", "binary data".toByteArray())
+                        append("channel", ChannelProvider(1234) { ByteReadChannel("channel") })
+                    },
+                    "WebAppBoundary",
+                    ContentType.MultiPart.FormData.withParameter("boundary", "WebAppBoundary")
+                )
+            )
+            onUpload { _, _ -> }
+        }
+
+        log.assertLogEqual("--> POST http://localhost/")
+            .assertLogEqual("Content-Type: multipart/form-data; boundary=WebAppBoundary")
+            .assertLogEqual("Content-Length: 10487466")
+            .assertLogEqual("Accept: */*")
+            .assertLogEqual("")
+            .assertLogEqual("--WebAppBoundary")
+            .assertLogEqual("Content-Disposition: form-data; name=\"description\"")
+            .assertLogEqual("Content-Length: 18")
+            .assertLogEqual("")
+            .assertLogEqual("simple description")
+            .assertLogEqual("--WebAppBoundary")
+            .assertLogEqual("Content-Disposition: form-data; name=\"image\"; filename=\"sample_image.jpg\"")
+            .assertLogEqual("Content-Type: image/png")
+            .assertLogEqual("Content-Length: $size")
+            .assertLogEqual("")
+            .assertLogEqual("binary $size-byte body omitted")
+            .assertLogEqual("--WebAppBoundary")
+            .assertLogEqual("Content-Disposition: form-data; name=\"binary\"")
+            .assertLogEqual("Content-Length: 11")
+            .assertLogEqual("")
+            .assertLogEqual("binary 11-byte body omitted")
+            .assertLogEqual("--WebAppBoundary")
+            .assertLogEqual("Content-Disposition: form-data; name=\"channel\"")
+            .assertLogEqual("Content-Length: 1234")
+            .assertLogEqual("")
+            .assertLogEqual("binary 1234-byte body omitted")
+            .assertLogEqual("--WebAppBoundary--")
+            .assertLogEqual("--> END POST")
+            .assertLogMatch(Regex("""<-- 200 OK http://localhost/ \(\d+ms\)"""))
+            .assertLogEqual("Content-Length: 0")
+            .assertLogMatch(Regex("""<-- END HTTP \(\d+ms, 0-byte body\)"""))
+            .assertNoMoreLogs()
+    }
+
+    private fun MockRequestHandleScope.respondWithLength(): HttpResponseData {
+        return respond(
+            "",
+            headers = Headers.build {
+                append("Content-Length", "0")
+            }
+        )
+    }
+
+    private fun MockRequestHandleScope.respondChunked(
+        body: ByteReadChannel,
+        status: HttpStatusCode = HttpStatusCode.OK,
+        contentType: ContentType = ContentType.Text.Plain,
+        headers: Headers = Headers.Empty
+    ): HttpResponseData {
+        return respond(
+            body,
+            headers = Headers.build {
+                appendAll(headers)
+                append("Transfer-Encoding", "chunked")
+                set("Content-Type", contentType.toString())
+            },
+            status = status
+        )
+    }
+
+    private fun MockRequestHandleScope.respondWithLength(
+        body: String,
+        status: HttpStatusCode = HttpStatusCode.OK,
+        contentType: ContentType = ContentType.Text.Plain,
+        headers: Headers = Headers.Empty
+    ): HttpResponseData {
+        return respond(
+            ByteReadChannel(body),
+            headers = Headers.build {
+                appendAll(headers)
+                append("Content-Length", body.toByteArray(Charsets.UTF_8).size.toString())
+                set("Content-Type", contentType.toString())
+            },
+            status = status
+        )
+    }
+
+    private fun MockRequestHandleScope.respondWithLength(
+        body: ByteArray,
+        status: HttpStatusCode = HttpStatusCode.OK,
+        contentType: ContentType = ContentType.Text.Plain,
+        headers: Headers = Headers.Empty
+    ): HttpResponseData {
+        return respond(
+            ByteReadChannel(body),
+            headers = Headers.build {
+                appendAll(headers)
+                append("Content-Length", body.size.toString())
+                set("Content-Type", contentType.toString())
+            },
+            status = status
+        )
+    }
+
+    private fun testWithLevel(
+        lvl: LogLevel,
+        handle: MockRequestHandler,
+        test: suspend (HttpClient) -> Unit
+    ) = runTest {
+        HttpClient(MockEngine) {
+            install(Logging) {
+                level = lvl
+                logger = log
+                format = LoggingFormat.OkHttp
+            }
+
+            engine {
+                addHandler(handle)
+            }
+        }.use { client ->
+            test(client)
+        }
+    }
+}

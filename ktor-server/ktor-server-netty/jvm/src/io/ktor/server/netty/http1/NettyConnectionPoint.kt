@@ -27,7 +27,8 @@ internal class NettyConnectionPoint(
     override val method: HttpMethod
         get() = HttpMethod.parse(request.method().name())
 
-    override val scheme by lazy { if (context.pipeline().context("ssl") == null) "http" else "https" }
+    override val scheme: String
+        get() = if (context.pipeline().context("ssl") == null) "http" else "https"
 
     @Deprecated(
         "Use localHost or serverHost instead",
@@ -51,7 +52,7 @@ internal class NettyConnectionPoint(
             ?: "localhost"
 
     override val serverHost: String
-        get() = request.headers().get(HttpHeaders.Host)?.substringBefore(":") ?: localHost
+        get() = request.headers().get(HttpHeaders.Host)?.substringBeforeLast(":") ?: localHost
 
     override val localAddress: String
         get() = (context.channel().localAddress() as? InetSocketAddress)?.hostString ?: "localhost"
@@ -63,7 +64,7 @@ internal class NettyConnectionPoint(
         get() = (context.channel().localAddress() as? InetSocketAddress)?.port ?: defaultPort
 
     override val serverPort: Int
-        get() = request.headers().get(HttpHeaders.Host)?.substringAfter(":", defaultPort.toString())?.toInt()
+        get() = request.headers().get(HttpHeaders.Host)?.substringAfterLast(":", defaultPort.toString())?.toInt()
             ?: localPort
 
     override val remoteHost: String

@@ -9,11 +9,13 @@ import io.ktor.server.engine.*
 import io.ktor.server.jetty.*
 import io.ktor.server.response.*
 import io.ktor.server.servlet.*
-import org.slf4j.*
-import java.net.*
-import java.util.concurrent.*
-import java.util.concurrent.atomic.*
-import kotlin.test.*
+import org.slf4j.LoggerFactory
+import java.net.ServerSocket
+import java.net.URL
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 @Suppress("BlockingMethodInNonBlockingContext")
 class MultipleDispatchOnTimeout {
@@ -32,14 +34,12 @@ class MultipleDispatchOnTimeout {
         val environment = applicationEnvironment {
             log = LoggerFactory.getLogger("io.ktor.test")
         }
-        val props = applicationProperties(environment) {
+        val props = serverConfig(environment) {
             module {
                 intercept(ApplicationCallPipeline.Call) {
                     callCount.incrementAndGet()
-                    val timeout = Math.max(
-                        (call.request as ServletApplicationRequest).servletRequest.asyncContext.timeout,
-                        0
-                    )
+                    val timeout = (call.request as ServletApplicationRequest)
+                        .servletRequest.asyncContext.timeout.coerceAtLeast(0)
                     Thread.sleep(timeout + 1000)
                     call.respondTextWriter {
                         write("A ok!")

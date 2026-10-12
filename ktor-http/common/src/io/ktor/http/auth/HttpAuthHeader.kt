@@ -1,6 +1,6 @@
 /*
-* Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
-*/
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 package io.ktor.http.auth
 
@@ -17,6 +17,9 @@ private val escapeRegex: Regex = "\\\\.".toRegex()
 
 /**
  * Parses an authorization header [headerValue] into a [HttpAuthHeader].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.parseAuthorizationHeader)
+ *
  * @return [HttpAuthHeader] or `null` if argument string is blank.
  * @throws [ParseException] on invalid header
  *
@@ -62,6 +65,9 @@ public fun parseAuthorizationHeader(headerValue: String): HttpAuthHeader? {
 
 /**
  * Parses an authorization header [headerValue] into a list of [HttpAuthHeader].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.parseAuthorizationHeaders)
+ *
  * @return a list of [HttpAuthHeader]
  * @throws [ParseException] on invalid header
  */
@@ -225,6 +231,8 @@ private fun matchToken68(headerValue: String, startIndex: Int): Int {
  *
  * This can be of type [HttpAuthHeader.Single] or [HttpAuthHeader.Parameterized].
  *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.HttpAuthHeader)
+ *
  * @property authScheme auth scheme, usually one of [AuthScheme]
  */
 public sealed class HttpAuthHeader(public val authScheme: String) {
@@ -236,6 +244,9 @@ public sealed class HttpAuthHeader(public val authScheme: String) {
 
     /**
      * Describes an authentication header that is represented by a single [blob].
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.HttpAuthHeader.Single)
+     *
      * @property blob contains single token 68, should consist from digits, letters and one of the following: `-._~+/`
      */
     public class Single(authScheme: String, public val blob: String) : HttpAuthHeader(authScheme) {
@@ -249,8 +260,7 @@ public sealed class HttpAuthHeader(public val authScheme: String) {
         override fun render(encoding: HeaderValueEncoding): String = render()
 
         override fun equals(other: Any?): Boolean {
-            if (other !is Single) return false
-            return other.authScheme.equals(authScheme, ignoreCase = true) &&
+            return other is Single && other.authScheme.equals(authScheme, ignoreCase = true) &&
                 other.blob.equals(blob, ignoreCase = true)
         }
 
@@ -261,6 +271,9 @@ public sealed class HttpAuthHeader(public val authScheme: String) {
 
     /**
      * Describes a parameterized authentication header that is represented by a set of [parameters] encoded with [encoding].
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.HttpAuthHeader.Parameterized)
+     *
      * @property parameters a list of auth parameters
      * @property encoding parameters encoding method, one of [HeaderValueEncoding]
      */
@@ -285,6 +298,8 @@ public sealed class HttpAuthHeader(public val authScheme: String) {
 
         /**
          * Copies this [Parameterized] appending a new parameter [name] [value].
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.HttpAuthHeader.Parameterized.withParameter)
          */
         public fun withParameter(name: String, value: String): Parameterized =
             Parameterized(authScheme, this.parameters + HeaderValueParam(name, value), encoding)
@@ -294,6 +309,8 @@ public sealed class HttpAuthHeader(public val authScheme: String) {
          * or appending if no such parameters found.
          * If there were several pairs they will be reduced into a single pair
          * at position of first occurrence discarding following pairs with this [name].
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.HttpAuthHeader.Parameterized.withReplacedParameter)
          */
         public fun withReplacedParameter(name: String, value: String): Parameterized {
             val firstIndex = parameters.indexOfFirst { it.name == name }
@@ -303,10 +320,12 @@ public sealed class HttpAuthHeader(public val authScheme: String) {
             val newParameters = parameters.mapNotNull {
                 when {
                     it.name != name -> it
+
                     !replaced -> {
                         replaced = true
                         HeaderValueParam(name, value)
                     }
+
                     else -> null
                 }
             }
@@ -322,6 +341,8 @@ public sealed class HttpAuthHeader(public val authScheme: String) {
 
         /**
          * Tries to extract the first value of a parameter [name]. Returns null when not found.
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.HttpAuthHeader.Parameterized.parameter)
          */
         public fun parameter(name: String): String? = parameters.firstOrNull { it.name == name }?.value
 
@@ -334,8 +355,7 @@ public sealed class HttpAuthHeader(public val authScheme: String) {
         override fun render(): String = render(encoding)
 
         override fun equals(other: Any?): Boolean {
-            if (other !is Parameterized) return false
-            return other.authScheme.equals(authScheme, ignoreCase = true) &&
+            return other is Parameterized && other.authScheme.equals(authScheme, ignoreCase = true) &&
                 other.parameters == parameters
         }
 
@@ -346,16 +366,22 @@ public sealed class HttpAuthHeader(public val authScheme: String) {
 
     /**
      * Encodes the header with a specified [encoding].
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.HttpAuthHeader.render)
      */
     public abstract fun render(encoding: HeaderValueEncoding): String
 
     /**
      * Encodes the header with the default [HeaderValueEncoding] for this header.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.HttpAuthHeader.render)
      */
     public abstract fun render(): String
 
     /**
      * Encodes the header with the default [HeaderValueEncoding] for this header.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.HttpAuthHeader.toString)
      */
     override fun toString(): String {
         return render()
@@ -364,6 +390,8 @@ public sealed class HttpAuthHeader(public val authScheme: String) {
     public companion object {
         /**
          * Generates an [AuthScheme.Basic] challenge as a [HttpAuthHeader].
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.HttpAuthHeader.Companion.basicAuthChallenge)
          */
         public fun basicAuthChallenge(realm: String, charset: Charset?): Parameterized = Parameterized(
             AuthScheme.Basic,
@@ -377,6 +405,8 @@ public sealed class HttpAuthHeader(public val authScheme: String) {
 
         /**
          * Generates an [AuthScheme.Bearer] challenge as a [HttpAuthHeader].
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.HttpAuthHeader.Companion.bearerAuthChallenge)
          */
         public fun bearerAuthChallenge(scheme: String, realm: String? = null): HttpAuthHeader = Parameterized(
             authScheme = scheme,
@@ -385,38 +415,69 @@ public sealed class HttpAuthHeader(public val authScheme: String) {
 
         /**
          * Generates an [AuthScheme.Digest] challenge as a [HttpAuthHeader].
+         *
+         * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.HttpAuthHeader.Companion.digestAuthChallenge)
          */
         public fun digestAuthChallenge(
             realm: String,
-            nonce: String = generateNonce(),
+            nonce: String = generateNonceBlocking(),
             domain: List<String> = emptyList(),
             opaque: String? = null,
             stale: Boolean? = null,
-            algorithm: String = "MD5"
+            algorithm: DigestAlgorithm = DigestAlgorithm.SHA_256,
+            charset: Charset? = null,
+            userhash: Boolean = false,
+            qop: List<String> = emptyList()
         ): Parameterized = Parameterized(
-            AuthScheme.Digest,
-            linkedMapOf<String, String>().apply {
-                put("realm", realm)
-                put("nonce", nonce)
+            authScheme = AuthScheme.Digest,
+            parameters = linkedMapOf<String, String>().apply {
+                put("realm", realm.quote())
+                put("nonce", nonce.quote())
                 if (domain.isNotEmpty()) {
-                    put("domain", domain.joinToString(" "))
+                    put("domain", domain.joinToString(" ").quote())
                 }
                 if (opaque != null) {
-                    put("opaque", opaque)
+                    put("opaque", opaque.quote())
                 }
                 if (stale != null) {
                     put("stale", stale.toString())
                 }
-                put("algorithm", algorithm)
+                put("algorithm", algorithm.name)
+                if (charset != null) {
+                    put("charset", charset.name.toUpperCasePreservingASCIIRules())
+                }
+                if (userhash) {
+                    put("userhash", "true")
+                }
+                if (qop.isNotEmpty()) {
+                    put("qop", qop.joinToString(",").quote())
+                }
             },
-            HeaderValueEncoding.QUOTED_ALWAYS
+            encoding = HeaderValueEncoding.QUOTED_WHEN_REQUIRED
         )
+
+        @Deprecated("Maintained for binary compatibility", level = DeprecationLevel.WARNING)
+        public fun digestAuthChallenge(
+            realm: String,
+            nonce: String = generateNonceBlocking(),
+            domain: List<String> = emptyList(),
+            opaque: String? = null,
+            stale: Boolean? = null,
+            algorithm: String = "MD5"
+        ): Parameterized {
+            val algorithm = requireNotNull(DigestAlgorithm.from(algorithm)) {
+                "Unsupported algorithm: $algorithm"
+            }
+            return digestAuthChallenge(realm, nonce, domain, opaque, stale, algorithm, charset = null)
+        }
     }
 
     /**
      * Standard parameters for [Parameterized] [HttpAuthHeader].
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.http.auth.HttpAuthHeader.Parameters)
      */
-    @Suppress("KDocMissingDocumentation", "PublicApiImplicitType")
+    @Suppress("KDocMissingDocumentation", "ConstPropertyName")
     public object Parameters {
         public const val Realm: String = "realm"
         public const val Charset: String = "charset"

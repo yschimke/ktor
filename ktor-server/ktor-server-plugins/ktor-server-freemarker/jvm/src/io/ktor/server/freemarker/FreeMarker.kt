@@ -1,19 +1,21 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.freemarker
 
-import freemarker.template.*
+import freemarker.template.Configuration
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.application.*
 import io.ktor.server.application.hooks.*
 import io.ktor.utils.io.*
-import java.io.*
+import java.io.StringWriter
 
 /**
  * A response content handled by the [FreeMarker] plugin.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.freemarker.FreeMarkerContent)
  *
  * @param template name that is resolved by FreeMarker
  * @param model to be passed during template rendering
@@ -31,6 +33,8 @@ public class FreeMarkerContent(
  * A plugin that allows you to use FreeMarker templates as views within your application.
  * Provides the ability to respond with [FreeMarkerContent].
  * You can learn more from [FreeMarker](https://ktor.io/docs/freemarker.html).
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.server.freemarker.FreeMarker)
  */
 public val FreeMarker: ApplicationPlugin<Configuration> = createApplicationPlugin(
     "FreeMarker",

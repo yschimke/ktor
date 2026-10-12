@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.jetty
@@ -7,8 +7,6 @@ package io.ktor.server.jetty
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
-import io.ktor.server.response.*
-import io.ktor.util.*
 import io.ktor.util.cio.*
 import io.ktor.util.pipeline.*
 import io.ktor.utils.io.*
@@ -49,6 +47,7 @@ internal class JettyKtorHandler(
     }
     private val dispatcher = executor.asCoroutineDispatcher()
     private val multipartConfig = MultipartConfigElement(System.getProperty("java.io.tmpdir"))
+    private val idleTimeout = configuration.idleTimeout
 
     private val handlerJob = SupervisorJob(applicationProvider().parentCoroutineContext[Job])
 
@@ -72,7 +71,7 @@ internal class JettyKtorHandler(
     ) {
         try {
             val contentType = request.contentType
-            if (contentType != null && contentType.startsWith("multipart/")) {
+            if (contentType != null && contentType in ContentType.MultiPart) {
                 baseRequest.setAttribute(Request.MULTIPART_CONFIG_ELEMENT, multipartConfig)
                 // TODO someone reported auto-cleanup issues so we have to check it
             }
@@ -90,35 +89,36 @@ internal class JettyKtorHandler(
                     response,
                     engineContext = engineDispatcher,
                     userContext = dispatcher,
-                    coroutineContext = this@launch.coroutineContext
+                    coroutineContext = this@launch.coroutineContext,
+                    idleTimeout = idleTimeout,
                 )
 
                 try {
                     pipeline.execute(call)
-                } catch (cancelled: CancellationException) {
-                    response.sendErrorIfNotCommitted(HttpServletResponse.SC_GONE)
-                } catch (channelFailed: ChannelIOException) {
+                } catch (_: CancellationException) {
+                    response.sendErrorIfNotCommitted(status = HttpServletResponse.SC_GONE, message = null)
+                } catch (_: ChannelIOException) {
                 } catch (error: Throwable) {
                     logError(call, error)
-                    if (!response.isCommitted) {
-                        call.respond(HttpStatusCode.InternalServerError)
-                    }
+                    response.sendErrorIfNotCommitted(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, error.message)
                 } finally {
                     try {
                         request.asyncContext?.complete()
-                    } catch (expected: IllegalStateException) {
+                    } catch (_: IllegalStateException) {
                     }
                 }
             }
         } catch (ex: Throwable) {
             environment.log.error("Application cannot fulfill the request", ex)
-            response.sendErrorIfNotCommitted(HttpServletResponse.SC_INTERNAL_SERVER_ERROR)
+            response.sendErrorIfNotCommitted(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, ex.message)
         }
     }
 
-    private fun HttpServletResponse.sendErrorIfNotCommitted(status: Int) {
-        if (!isCommitted) {
-            sendError(status)
+    private fun HttpServletResponse.sendErrorIfNotCommitted(status: Int, message: String?) {
+        if (isCommitted) return
+        when (message) {
+            null -> sendError(status)
+            else -> sendError(status, message)
         }
     }
 }

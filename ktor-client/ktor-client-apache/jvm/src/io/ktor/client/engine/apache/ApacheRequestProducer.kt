@@ -12,22 +12,25 @@ import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.utils.io.*
 import kotlinx.coroutines.*
-import org.apache.http.*
 import org.apache.http.HttpHeaders
+import org.apache.http.HttpHost
 import org.apache.http.HttpRequest
-import org.apache.http.client.config.*
-import org.apache.http.client.methods.*
-import org.apache.http.client.utils.*
-import org.apache.http.entity.*
-import org.apache.http.nio.*
-import org.apache.http.nio.protocol.*
-import org.apache.http.protocol.*
-import java.nio.*
-import kotlin.coroutines.*
+import org.apache.http.client.config.RequestConfig
+import org.apache.http.client.methods.HttpUriRequest
+import org.apache.http.client.methods.RequestBuilder
+import org.apache.http.client.utils.URIUtils
+import org.apache.http.entity.BasicHttpEntity
+import org.apache.http.nio.ContentEncoder
+import org.apache.http.nio.IOControl
+import org.apache.http.nio.protocol.HttpAsyncRequestProducer
+import org.apache.http.protocol.HttpContext
+import java.nio.ByteBuffer
+import kotlin.coroutines.CoroutineContext
 
 @OptIn(InternalAPI::class)
 internal class ApacheRequestProducer(
     val requestData: HttpRequestData,
+    @Suppress("DEPRECATION")
     private val config: ApacheEngineConfig,
     callContext: CoroutineContext
 ) : HttpAsyncRequestProducer, CoroutineScope {
@@ -42,18 +45,22 @@ internal class ApacheRequestProducer(
     private val producerJob = Job()
     override val coroutineContext: CoroutineContext = callContext + producerJob
 
-    @Suppress("DEPRECATION")
     private val channel: ByteReadChannel = getChannel(callContext, requestData.body)
 
     @OptIn(DelicateCoroutinesApi::class)
     private fun getChannel(callContext: CoroutineContext, body: OutgoingContent): ByteReadChannel = when (body) {
         is OutgoingContent.ByteArrayContent -> ByteReadChannel(body.bytes())
+
         is OutgoingContent.ProtocolUpgrade -> throw UnsupportedContentTypeException(body)
+
         is OutgoingContent.NoContent -> ByteReadChannel.Empty
+
         is OutgoingContent.ReadChannelContent -> body.readFrom()
+
         is OutgoingContent.WriteChannelContent -> GlobalScope.writer(callContext, autoFlush = true) {
             body.writeTo(channel)
         }.channel
+
         is OutgoingContent.ContentWrapper -> getChannel(callContext, body.delegate())
     }
 
@@ -130,8 +137,9 @@ internal class ApacheRequestProducer(
                 else -> builder.addHeader(key, value)
             }
         }
+        val hasContent = body !is OutgoingContent.NoContent
 
-        if ((method != HttpMethod.Get && method != HttpMethod.Head) || body !is OutgoingContent.NoContent) {
+        if (method.supportsRequestBody || hasContent) {
             builder.entity = BasicHttpEntity().apply {
                 val lengthResult = length
                 if (lengthResult.isNullOrBlank()) {

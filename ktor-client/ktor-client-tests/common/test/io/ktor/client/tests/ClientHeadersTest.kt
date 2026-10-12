@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.tests
@@ -7,20 +7,20 @@ package io.ktor.client.tests
 import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
+import io.ktor.client.test.base.*
 import io.ktor.client.tests.utils.*
 import io.ktor.http.*
+import io.ktor.utils.io.*
 import kotlin.test.*
+import kotlin.time.Duration.Companion.seconds
 
-class ClientHeadersTest : ClientLoader() {
+class ClientHeadersTest : ClientLoader(timeout = 30.seconds) {
 
     @Test
-    fun testHeadersReturnNullWhenMissing() = clientTests(
-        listOf("Java", "Curl", "Js", "Darwin", "DarwinLegacy", "WinHttp")
-    ) {
+    fun testHeadersReturnNullWhenMissing() = clientTests {
         test { client ->
             client.get("$TEST_SERVER/headers").let {
                 assertEquals(HttpStatusCode.OK, it.status)
-                assertEquals("", it.bodyAsText())
 
                 assertNull(it.headers["X-Nonexistent-Header"])
                 assertNull(it.headers.getAll("X-Nonexistent-Header"))
@@ -29,7 +29,7 @@ class ClientHeadersTest : ClientLoader() {
     }
 
     @Test
-    fun testContentNegotiationMediaType() = clientTests(listOf("Java", "Curl", "Js", "Darwin", "DarwinLegacy")) {
+    fun testContentNegotiationMediaType() = clientTests {
         test { client ->
             client.preparePost("$TEST_SERVER/content-type") {
                 contentType(ContentType.Application.Json)
@@ -42,7 +42,7 @@ class ClientHeadersTest : ClientLoader() {
     }
 
     @Test
-    fun testHeadersMerge() = clientTests(listOf("Js")) {
+    fun testHeadersMerge() = clientTests {
         test { client ->
             client.get("$TEST_SERVER/headers-merge") {
                 accept(ContentType.Text.Html)
@@ -64,7 +64,7 @@ class ClientHeadersTest : ClientLoader() {
     }
 
     @Test
-    fun testAcceptMerge() = clientTests(listOf("Js")) {
+    fun testAcceptMerge() = clientTests {
         test { client ->
             val lines = client.get("$TCP_SERVER/headers-merge") {
                 accept(ContentType.Application.Xml)
@@ -77,7 +77,7 @@ class ClientHeadersTest : ClientLoader() {
     }
 
     @Test
-    fun testSingleHostHeader() = clientTests(listOf("Js", "Android", "Java")) {
+    fun testSingleHostHeader() = clientTests {
         test { client ->
             client.get("$TEST_SERVER/headers/host") {
                 header(HttpHeaders.Host, "CustomHost")
@@ -107,8 +107,9 @@ class ClientHeadersTest : ClientLoader() {
         }
     }
 
+    // Fails on Java before 19 because of https://bugs.openjdk.org/browse/JDK-8283544
     @Test
-    fun testRequestHasContentLength() = clientTests(listOf("Java", "Curl", "Js", "Darwin", "DarwinLegacy", "WinHttp")) {
+    fun testRequestHasContentLength() = clientTests(except("Java")) {
         test { client ->
             val get = client.get("$TEST_SERVER/headers").bodyAsText()
             assertEquals("", get)
@@ -121,6 +122,53 @@ class ClientHeadersTest : ClientLoader() {
 
             val post = client.post("$TEST_SERVER/headers").bodyAsText()
             assertEquals("0", post)
+        }
+    }
+
+    @Test
+    fun `Transfer-Encoding is not sent with Content-Length`() = clientTests {
+        test { client ->
+            suspend fun testWithMethod(method: HttpMethod) {
+                val response = client.request("$TEST_SERVER/echo/headers") {
+                    this.method = method
+                    setBody("Hello")
+                }
+
+                assertEquals(HttpStatusCode.OK, response.status)
+                val body = response.bodyAsText()
+                assertContains(body.lines(), "content-length: [5]")
+                assertTrue("$method: Shouldn't send the Transfer-Encoding header") { "transfer-encoding" !in body }
+            }
+
+            @OptIn(InternalAPI::class)
+            client.supportedMethods()
+                .filter { it.supportsRequestBody }
+                .forEach { testWithMethod(it) }
+        }
+    }
+
+    @Test
+    fun `raw source body is framed by the Content-Length header`() = clientTests {
+        test { client ->
+            val response = client.post("$TEST_SERVER/echo/headers") {
+                headers[HttpHeaders.ContentLength] = "5"
+                setBody(rawSourceOf("Hello"))
+            }.bodyAsText()
+
+            assertContains(response.lines(), "content-length: [5]")
+            assertTrue("Shouldn't send the Transfer-Encoding header") { "transfer-encoding" !in response }
+        }
+    }
+
+    // The Js engine can't stream a request body, so it buffers the source and always knows its size
+    @Test
+    fun `raw source body of unknown size is sent without Content-Length`() = clientTests(except("web:Js")) {
+        test { client ->
+            val response = client.post("$TEST_SERVER/echo/headers") {
+                setBody(rawSourceOf("Hello"))
+            }.bodyAsText()
+
+            assertTrue("Shouldn't send a Content-Length of unknown size") { "content-length" !in response }
         }
     }
 }

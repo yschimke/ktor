@@ -1,31 +1,40 @@
+/*
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
 
 import io.ktor.client.*
 import io.ktor.client.engine.darwin.*
 import io.ktor.client.engine.darwin.internal.legacy.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import io.ktor.client.tests.utils.*
+import io.ktor.client.test.base.*
 import io.ktor.http.*
-import kotlinx.coroutines.*
-import platform.Foundation.*
+import io.ktor.test.*
+import io.ktor.utils.io.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import platform.Foundation.NSHTTPCookieStorage.Companion.sharedHTTPCookieStorage
-import kotlin.coroutines.*
-import kotlin.test.*
+import platform.Foundation.NSOperationQueue
+import platform.Foundation.NSURLSession
+import platform.Foundation.NSURLSessionConfiguration
+import platform.Foundation.setValue
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.test.fail
+import kotlin.time.Duration.Companion.seconds
 
-/*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
- */
-
-class DarwinLegacyEngineTest {
-
-    val testCoroutineContext: CoroutineContext = Dispatchers.Default
+@Suppress("DEPRECATION")
+class DarwinLegacyEngineTest : ClientEngineTest<DarwinLegacyClientEngineConfig>(DarwinLegacy) {
 
     @Test
-    fun testRequestInRunBlocking() = runBlocking(testCoroutineContext) {
+    fun testRequestInRunBlocking() = runBlocking(Dispatchers.Default) {
         val client = HttpClient(DarwinLegacy)
 
         try {
-            withTimeout(1000) {
+            withTimeout(30.seconds) {
                 val response = client.get(TEST_SERVER)
                 assertEquals("Hello, world!", response.bodyAsText())
             }
@@ -35,30 +44,18 @@ class DarwinLegacyEngineTest {
     }
 
     @Test
-    fun testQueryWithCyrillic() = runBlocking(testCoroutineContext) {
-        val client = HttpClient(DarwinLegacy)
-
-        try {
-            withTimeout(1000) {
-                val response = client.get("$TEST_SERVER/echo_query?привет")
-                assertEquals("привет=[]", response.bodyAsText())
-            }
-        } finally {
-            client.close()
+    fun testQueryWithCyrillic() = testClient(timeout = 1.seconds) {
+        test { client ->
+            val response = client.get("$TEST_SERVER/echo_query?привет")
+            assertEquals("привет=[]", response.bodyAsText())
         }
     }
 
     @Test
-    fun testQueryWithMultipleParams() = runBlocking(testCoroutineContext) {
-        val client = HttpClient(DarwinLegacy)
-
-        try {
-            withTimeout(1000) {
-                val response = client.get("$TEST_SERVER/echo_query?asd=qwe&asd=123&qwe&zxc=vbn")
-                assertEquals("asd=[qwe, 123], qwe=[], zxc=[vbn]", response.bodyAsText())
-            }
-        } finally {
-            client.close()
+    fun testQueryWithMultipleParams() = testClient(timeout = 1.seconds) {
+        test { client ->
+            val response = client.get("$TEST_SERVER/echo_query?asd=qwe&asd=123&qwe&zxc=vbn")
+            assertEquals("asd=[qwe, 123], qwe=[], zxc=[vbn]", response.bodyAsText())
         }
     }
 
@@ -76,25 +73,26 @@ class DarwinLegacyEngineTest {
         assertTrue(
             stringToNSUrlString("http://привет.привет/") in possibleResults
         )
+        assertEquals(
+            "https://example.com/path;param=my%3Bvalue/segment",
+            stringToNSUrlString("https://example.com/path;param=my%3Bvalue/segment")
+        )
     }
 
     @Test
-    fun testCookieIsNotPersistedByDefault() = runBlocking(testCoroutineContext) {
-        val client = HttpClient(DarwinLegacy)
-        try {
+    fun testCookieIsNotPersistedByDefault() = testClient {
+        test { client ->
             client.get("$TEST_SERVER/cookies")
             val result = client.get("$TEST_SERVER/cookies/dump")
                 .bodyAsText()
 
             assertEquals("Cookies: ", result)
-        } finally {
-            client.close()
         }
     }
 
     @Test
-    fun testCookiePersistedWithSessionStore() = runBlocking(testCoroutineContext) {
-        val client = HttpClient(DarwinLegacy) {
+    fun testCookiePersistedWithSessionStore() = testClient {
+        config {
             engine {
                 configureSession {
                     setHTTPCookieStorage(sharedHTTPCookieStorage)
@@ -102,20 +100,18 @@ class DarwinLegacyEngineTest {
             }
         }
 
-        try {
+        test { client ->
             client.get("$TEST_SERVER/cookies")
             val result = client.get("$TEST_SERVER/cookies/dump")
                 .bodyAsText()
 
             assertEquals("Cookies: hello-cookie=my-awesome-value", result)
-        } finally {
-            client.close()
         }
     }
 
     @Test
-    fun testOverrideDefaultSession(): Unit = runBlocking(testCoroutineContext) {
-        val client = HttpClient(DarwinLegacy) {
+    fun testOverrideDefaultSession(): Unit = testClient {
+        config {
             val delegate = KtorLegacyNSURLSessionDelegate()
             val session = NSURLSession.sessionWithConfiguration(
                 NSURLSessionConfiguration.defaultSessionConfiguration(),
@@ -127,17 +123,15 @@ class DarwinLegacyEngineTest {
             }
         }
 
-        try {
+        test { client ->
             val response = client.get(TEST_SERVER)
             assertEquals("Hello, world!", response.bodyAsText())
-        } finally {
-            client.close()
         }
     }
 
     @Test
-    fun testConfigureRequest(): Unit = runBlocking(testCoroutineContext) {
-        val client = HttpClient(DarwinLegacy) {
+    fun testConfigureRequest(): Unit = testClient {
+        config {
             engine {
                 configureRequest {
                     setValue("my header value", forHTTPHeaderField = "XCustomHeader")
@@ -145,9 +139,43 @@ class DarwinLegacyEngineTest {
             }
         }
 
-        val response = client.get("$TEST_SERVER/headers/echo?headerName=XCustomHeader")
-        assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals("my header value", response.bodyAsText())
+        test { client ->
+            val response = client.get("$TEST_SERVER/headers/echo?headerName=XCustomHeader")
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("my header value", response.bodyAsText())
+        }
+    }
+
+    @Test
+    fun testExecuteAfterSessionClose() = runTest {
+        val config = DarwinLegacyClientEngineConfig()
+        val session = DarwinLegacySession(config, null)
+
+        session.close()
+        launch {
+            val request = request { url(TEST_SERVER) }.build()
+            session.execute(request, coroutineContext)
+            fail("Execution expected to be cancelled")
+        }
+    }
+
+    @OptIn(InternalAPI::class)
+    @Test
+    fun testWebSocketExecuteAfterSessionClose() = runTest {
+        val config = DarwinLegacyClientEngineConfig()
+        val session = DarwinLegacySession(config, null)
+
+        session.close()
+        launch {
+            val request = request {
+                url(TEST_WEBSOCKET_SERVER)
+                body = object : ClientUpgradeContent() {
+                    override fun verify(headers: Headers) = Unit
+                }
+            }.build()
+            session.execute(request, coroutineContext)
+            fail("Execution expected to be cancelled")
+        }
     }
 
     private fun stringToNSUrlString(value: String): String {

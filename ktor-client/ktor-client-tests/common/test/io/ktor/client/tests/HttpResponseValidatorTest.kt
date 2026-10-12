@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.tests
@@ -7,13 +7,13 @@ package io.ktor.client.tests
 import io.ktor.client.call.*
 import io.ktor.client.engine.mock.*
 import io.ktor.client.plugins.*
+import io.ktor.client.plugins.logging.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import io.ktor.client.tests.utils.*
+import io.ktor.client.test.base.*
 import io.ktor.http.*
 import kotlin.test.*
 
-@Suppress("DEPRECATION")
 class HttpResponseValidatorTest {
     private var firstHandler = 0
     private var secondHandler = 0
@@ -30,13 +30,11 @@ class HttpResponseValidatorTest {
                 addHandler { respondOk() }
             }
             HttpResponseValidator {
-                @Suppress("DEPRECATION_ERROR")
                 handleResponseException { cause ->
                     firstHandler++
                     assertTrue(cause is CallValidatorTestException)
                 }
 
-                @Suppress("DEPRECATION_ERROR")
                 handleResponseException { cause ->
                     secondHandler++
                     assertTrue(cause is CallValidatorTestException)
@@ -48,7 +46,7 @@ class HttpResponseValidatorTest {
                     assertNotNull(request)
                 }
 
-                handleResponseException { cause, request ->
+                handleResponseExceptionWithRequest { cause, request ->
                     fourthHandler++
                     assertTrue(cause is CallValidatorTestException)
                     assertNotNull(request)
@@ -81,7 +79,6 @@ class HttpResponseValidatorTest {
                 addHandler { throw CallValidatorTestException() }
             }
             HttpResponseValidator {
-                @Suppress("DEPRECATION_ERROR")
                 handleResponseException { cause ->
                     assertTrue(cause is CallValidatorTestException)
                     firstHandler++
@@ -111,7 +108,6 @@ class HttpResponseValidatorTest {
                 addHandler { respondOk() }
             }
             HttpResponseValidator {
-                @Suppress("DEPRECATION_ERROR")
                 handleResponseException { cause ->
                     assertTrue(cause is CallValidatorTestException)
                     handleTriggered = true
@@ -136,7 +132,6 @@ class HttpResponseValidatorTest {
                 addHandler { respondOk() }
             }
             HttpResponseValidator {
-                @Suppress("DEPRECATION_ERROR")
                 handleResponseException { cause ->
                     assertTrue(cause is CallValidatorTestException)
                     handleTriggered = true
@@ -161,7 +156,6 @@ class HttpResponseValidatorTest {
                 addHandler { respondOk() }
             }
             HttpResponseValidator {
-                @Suppress("DEPRECATION_ERROR")
                 handleResponseException { cause ->
                     firstHandler++
                     assertTrue(cause is CallValidatorTestException)
@@ -169,7 +163,6 @@ class HttpResponseValidatorTest {
             }
 
             HttpResponseValidator {
-                @Suppress("DEPRECATION_ERROR")
                 handleResponseException { cause ->
                     secondHandler++
                     assertTrue(cause is CallValidatorTestException)
@@ -498,7 +491,10 @@ class HttpResponseValidatorTest {
                 client.get {}
                 fail("Should fail")
             } catch (cause: ResponseException) {
-                assertEquals(cause.message?.contains("<body failed decoding>"), true)
+                val message = cause.message
+                assertNotNull(message)
+                assertTrue { message.startsWith("Bad response: HttpResponse[http://localhost") }
+                assertTrue { message.contains("900 Awesome code") }
             }
         }
     }
@@ -519,10 +515,33 @@ class HttpResponseValidatorTest {
             }
         }
 
-        test {
-            it.prepareGet("").execute {
+        test { client ->
+            assertEquals("Hello, world!", client.get("").bodyAsText())
+        }
+    }
+
+    @Test
+    fun testConsumeBodyWithLogging() = testWithEngine(MockEngine) {
+        config {
+            install(Logging) {
+                level = LogLevel.ALL
             }
-            assertEquals("Hello, world!", it.get("").bodyAsText())
+
+            HttpResponseValidator {
+                validateResponse {
+                    assertEquals("Hello, world!", it.bodyAsText())
+                }
+            }
+
+            engine {
+                addHandler {
+                    respondOk("Hello, world!")
+                }
+            }
+        }
+
+        test { client ->
+            assertEquals("Hello, world!", client.get("").bodyAsText())
         }
     }
 }

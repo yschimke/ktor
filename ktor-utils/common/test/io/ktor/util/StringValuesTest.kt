@@ -53,6 +53,21 @@ class StringValuesTest {
     }
 
     @Test
+    fun `case-insensitive constructor deduplicates keys that differ by case`() {
+        val sv = StringValuesImpl(
+            caseInsensitiveName = true,
+            values = mapOf("A" to listOf("1"), "a" to listOf("2"))
+        )
+
+        // Keys differing only by case should be merged into one entry,
+        // keeping the first occurrence's casing.
+        assertEquals(setOf("A"), sv.names())
+        assertEquals(listOf("1", "2"), sv.getAll("a"))
+        assertEquals(listOf("1", "2"), sv.getAll("A"))
+        assertEquals(1, sv.entries().size)
+    }
+
+    @Test
     fun addEmptyValuesListAddsKey() {
         val map = StringValues.build {
             appendAll("key", emptyList())
@@ -115,5 +130,28 @@ class StringValuesTest {
         assertFalse { map.contains("Key1", "value1") }
         assertFalse { map.contains("kEy1", "value2") }
         assertFalse { map.contains("kEy1", "value3") }
+    }
+
+    @Test
+    fun appendAllExtensions() {
+        val map = StringValues.build(true) {
+            appendAll("foo" to "bar")
+            appendAll("baz" to listOf("bar", "bor"))
+            appendAll(mapOf("rar" to listOf("boo", "too")))
+            appendAll(mapOf("goo" to "boo", "doo" to "dah"))
+        }
+
+        assertTrue { map.contains("foo") }
+        assertTrue { map.contains("foo", "bar") }
+        assertTrue { map.contains("baz") }
+        assertTrue { map.contains("baz", "bar") }
+        assertTrue { map.contains("baz", "bor") }
+        assertEquals(listOf("bar", "bor"), map.getAll("baz"))
+        assertTrue { map.contains("rar") }
+        assertTrue { map.contains("rar", "boo") }
+        assertTrue { map.contains("rar", "too") }
+        assertEquals(listOf("boo", "too"), map.getAll("rar"))
+        assertTrue { map.contains("goo", "boo") }
+        assertTrue { map.contains("doo", "dah") }
     }
 }

@@ -9,6 +9,7 @@ import io.ktor.client.plugins.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.resources.*
+import io.ktor.util.*
 import io.ktor.client.request.delete as deleteBuilder
 import io.ktor.client.request.get as getBuilder
 import io.ktor.client.request.head as headBuilder
@@ -28,6 +29,8 @@ import io.ktor.client.request.request as requestBuilder
 
 /**
  * Executes a [HttpClient] GET request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.get)
  */
 public suspend inline fun <reified T : Any> HttpClient.get(
     resource: T,
@@ -35,6 +38,7 @@ public suspend inline fun <reified T : Any> HttpClient.get(
 ): HttpResponse {
     val resources = resources()
     return getBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -42,6 +46,8 @@ public suspend inline fun <reified T : Any> HttpClient.get(
 
 /**
  * Executes a [HttpClient] POST request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.post)
  */
 public suspend inline fun <reified T : Any> HttpClient.post(
     resource: T,
@@ -49,6 +55,7 @@ public suspend inline fun <reified T : Any> HttpClient.post(
 ): HttpResponse {
     val resources = resources()
     return postBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -56,6 +63,8 @@ public suspend inline fun <reified T : Any> HttpClient.post(
 
 /**
  * Executes a [HttpClient] PUT request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.put)
  */
 public suspend inline fun <reified T : Any> HttpClient.put(
     resource: T,
@@ -63,6 +72,7 @@ public suspend inline fun <reified T : Any> HttpClient.put(
 ): HttpResponse {
     val resources = resources()
     return putBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -70,6 +80,8 @@ public suspend inline fun <reified T : Any> HttpClient.put(
 
 /**
  * Executes a [HttpClient] DELETE request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.delete)
  */
 public suspend inline fun <reified T : Any> HttpClient.delete(
     resource: T,
@@ -77,6 +89,7 @@ public suspend inline fun <reified T : Any> HttpClient.delete(
 ): HttpResponse {
     val resources = resources()
     return deleteBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -84,6 +97,8 @@ public suspend inline fun <reified T : Any> HttpClient.delete(
 
 /**
  * Executes a [HttpClient] PATCH request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.patch)
  */
 public suspend inline fun <reified T : Any> HttpClient.patch(
     resource: T,
@@ -91,6 +106,7 @@ public suspend inline fun <reified T : Any> HttpClient.patch(
 ): HttpResponse {
     val resources = resources()
     return patchBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -98,6 +114,8 @@ public suspend inline fun <reified T : Any> HttpClient.patch(
 
 /**
  * Executes a [HttpClient] OPTIONS request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.options)
  */
 public suspend inline fun <reified T : Any> HttpClient.options(
     resource: T,
@@ -105,6 +123,7 @@ public suspend inline fun <reified T : Any> HttpClient.options(
 ): HttpResponse {
     val resources = resources()
     return optionsBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -112,6 +131,8 @@ public suspend inline fun <reified T : Any> HttpClient.options(
 
 /**
  * Executes a [HttpClient] HEAD request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.head)
  */
 public suspend inline fun <reified T : Any> HttpClient.head(
     resource: T,
@@ -119,6 +140,7 @@ public suspend inline fun <reified T : Any> HttpClient.head(
 ): HttpResponse {
     val resources = resources()
     return headBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -126,6 +148,8 @@ public suspend inline fun <reified T : Any> HttpClient.head(
 
 /**
  * Executes a [HttpClient] request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.request)
  */
 public suspend inline fun <reified T : Any> HttpClient.request(
     resource: T,
@@ -133,6 +157,7 @@ public suspend inline fun <reified T : Any> HttpClient.request(
 ): HttpResponse {
     val resources = resources()
     return requestBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -140,6 +165,8 @@ public suspend inline fun <reified T : Any> HttpClient.request(
 
 /**
  * Prepares a [HttpClient] GET request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.prepareGet)
  */
 public suspend inline fun <reified T : Any> HttpClient.prepareGet(
     resource: T,
@@ -147,6 +174,7 @@ public suspend inline fun <reified T : Any> HttpClient.prepareGet(
 ): HttpStatement {
     val resources = resources()
     return prepareGetBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -154,6 +182,8 @@ public suspend inline fun <reified T : Any> HttpClient.prepareGet(
 
 /**
  * Prepares a [HttpClient] POST request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.preparePost)
  */
 public suspend inline fun <reified T : Any> HttpClient.preparePost(
     resource: T,
@@ -161,6 +191,7 @@ public suspend inline fun <reified T : Any> HttpClient.preparePost(
 ): HttpStatement {
     val resources = resources()
     return preparePostBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -168,6 +199,8 @@ public suspend inline fun <reified T : Any> HttpClient.preparePost(
 
 /**
  * Prepares a [HttpClient] PUT request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.preparePut)
  */
 public suspend inline fun <reified T : Any> HttpClient.preparePut(
     resource: T,
@@ -175,6 +208,7 @@ public suspend inline fun <reified T : Any> HttpClient.preparePut(
 ): HttpStatement {
     val resources = resources()
     return preparePutBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -182,6 +216,8 @@ public suspend inline fun <reified T : Any> HttpClient.preparePut(
 
 /**
  * Prepares a [HttpClient] DELETE request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.prepareDelete)
  */
 public suspend inline fun <reified T : Any> HttpClient.prepareDelete(
     resource: T,
@@ -189,6 +225,7 @@ public suspend inline fun <reified T : Any> HttpClient.prepareDelete(
 ): HttpStatement {
     val resources = resources()
     return prepareDeleteBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -196,6 +233,8 @@ public suspend inline fun <reified T : Any> HttpClient.prepareDelete(
 
 /**
  * Prepares a [HttpClient] PATCH request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.preparePatch)
  */
 public suspend inline fun <reified T : Any> HttpClient.preparePatch(
     resource: T,
@@ -203,6 +242,7 @@ public suspend inline fun <reified T : Any> HttpClient.preparePatch(
 ): HttpStatement {
     val resources = resources()
     return preparePatchBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -210,6 +250,8 @@ public suspend inline fun <reified T : Any> HttpClient.preparePatch(
 
 /**
  * Prepares a [HttpClient] OPTIONS request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.prepareOptions)
  */
 public suspend inline fun <reified T : Any> HttpClient.prepareOptions(
     resource: T,
@@ -217,6 +259,7 @@ public suspend inline fun <reified T : Any> HttpClient.prepareOptions(
 ): HttpStatement {
     val resources = resources()
     return prepareOptionsBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -224,6 +267,8 @@ public suspend inline fun <reified T : Any> HttpClient.prepareOptions(
 
 /**
  * Prepares a [HttpClient] HEAD request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.prepareHead)
  */
 public suspend inline fun <reified T : Any> HttpClient.prepareHead(
     resource: T,
@@ -231,6 +276,7 @@ public suspend inline fun <reified T : Any> HttpClient.prepareHead(
 ): HttpStatement {
     val resources = resources()
     return prepareHeadBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
@@ -238,6 +284,8 @@ public suspend inline fun <reified T : Any> HttpClient.prepareHead(
 
 /**
  * Prepares a [HttpClient] request, with a URL built from [resource] and the information from the [builder]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.prepareRequest)
  */
 public suspend inline fun <reified T : Any> HttpClient.prepareRequest(
     resource: T,
@@ -245,10 +293,19 @@ public suspend inline fun <reified T : Any> HttpClient.prepareRequest(
 ): HttpStatement {
     val resources = resources()
     return prepareRequestBuilder {
+        attributes.put(RESOURCE, resource)
         href(resources.resourcesFormat, resource, url)
         builder()
     }
 }
+
+/**
+ * The instance of the [Resource] annotated class used to for a request.
+ * Plugins may want to utilize this for monitoring.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.client.plugins.resources.RESOURCE)
+ */
+public val RESOURCE: AttributeKey<Any> = AttributeKey<Any>("Resource")
 
 @PublishedApi
 internal fun HttpClient.resources(): io.ktor.resources.Resources {

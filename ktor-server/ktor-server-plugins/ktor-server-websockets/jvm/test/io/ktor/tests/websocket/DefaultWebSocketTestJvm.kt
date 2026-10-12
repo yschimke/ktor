@@ -4,14 +4,15 @@
 
 package io.ktor.tests.websocket
 
-import io.ktor.server.test.base.*
-import io.ktor.server.testing.*
+import io.ktor.test.*
 import io.ktor.utils.io.*
 import io.ktor.websocket.*
-import kotlinx.coroutines.*
-import kotlin.test.*
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
-class DefaultWebSocketTestJvm : BaseTest() {
+class DefaultWebSocketTestJvm {
 
     @OptIn(InternalAPI::class)
     @Test
@@ -26,8 +27,8 @@ class DefaultWebSocketTestJvm : BaseTest() {
 
         val server = DefaultWebSocketSession(
             RawWebSocket(client2server, server2client, coroutineContext = parent),
-            -1L,
-            1000L
+            PINGER_DISABLED,
+            timeoutMillis = 1_000L,
         ).apply { start() }
 
         val client = RawWebSocket(server2client, client2server, coroutineContext = parent)

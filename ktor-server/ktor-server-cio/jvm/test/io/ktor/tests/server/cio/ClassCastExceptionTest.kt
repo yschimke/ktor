@@ -14,8 +14,8 @@ import io.ktor.server.routing.*
 import io.ktor.server.test.base.*
 import io.ktor.server.websocket.*
 import kotlinx.coroutines.*
-import java.util.concurrent.*
-import kotlin.test.*
+import java.util.concurrent.TimeUnit
+import kotlin.test.Test
 import io.ktor.client.engine.cio.CIO as CioClient
 import io.ktor.server.cio.CIO as CioServer
 
@@ -28,7 +28,7 @@ class ClassCastExceptionTest : EngineTestBase<CIOApplicationEngine, CIOApplicati
      * Regression test for KTOR-349
      */
     @Test
-    @NoHttp2
+    @Http1Only
     fun testClassCastException(): Unit = runBlocking {
         val exceptionHandler = CoroutineExceptionHandler { _, cause ->
             cancel("Uncaught failure", cause)

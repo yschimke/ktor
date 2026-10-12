@@ -13,6 +13,8 @@ import kotlinx.serialization.*
  * Constructs a URL for the [resource].
  *
  * The class of the [resource] instance **must** be annotated with [Resource].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.resources.href)
  */
 public inline fun <reified T> href(
     resourcesFormat: ResourcesFormat,
@@ -27,6 +29,8 @@ public inline fun <reified T> href(
  * Constructs a URL for the [resource].
  *
  * The class of the [resource] instance **must** be annotated with [Resource].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.resources.href)
  */
 public inline fun <reified T> href(
     resourcesFormat: ResourcesFormat,
@@ -64,10 +68,12 @@ public fun <T> href(
                 usedForPathParameterNames += part.dropLast(1)
                 values
             }
+
             part.endsWith("...") -> {
                 usedForPathParameterNames += part.dropLast(3)
                 parameters.getAll(part.dropLast(3)) ?: emptyList()
             }
+
             else -> {
                 val values = parameters.getAll(part)
                 if (values == null || values.size != 1) {

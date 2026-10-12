@@ -27,7 +27,7 @@ internal class CharArrayBuilder(
         return getImpl(index)
     }
 
-    private fun getImpl(index: Int) = bufferForIndex(index).get(index % current!!.size)
+    private fun getImpl(index: Int) = bufferForIndex(index)[index % current!!.size]
 
     override fun subSequence(startIndex: Int, endIndex: Int): CharSequence {
         require(startIndex <= endIndex) { "startIndex ($startIndex) should be less or equal to endIndex ($endIndex)" }
@@ -118,7 +118,7 @@ internal class CharArrayBuilder(
             val innerEndIndex = minOf(endIndex - base, CHAR_BUFFER_ARRAY_LENGTH)
 
             for (innerIndex in innerStartIndex until innerEndIndex) {
-                builder.append(buffer.get(innerIndex))
+                builder.append(buffer[innerIndex])
             }
 
             base += CHAR_BUFFER_ARRAY_LENGTH
@@ -127,7 +127,6 @@ internal class CharArrayBuilder(
         return builder
     }
 
-    @Suppress("ConvertTwoComparisonsToRangeCheck")
     private inner class SubSequenceImpl(val start: Int, val end: Int) : CharSequence {
         private var stringified: String? = null
 

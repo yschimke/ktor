@@ -1,32 +1,45 @@
+/*
+ * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 package io.ktor.utils.io.pool
 
-import io.ktor.utils.io.core.*
 import kotlinx.atomicfu.*
 
-public interface ObjectPool<T : Any> : Closeable {
+public interface ObjectPool<T : Any> : AutoCloseable {
     /**
      * Pool capacity
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.pool.ObjectPool.capacity)
      */
     public val capacity: Int
 
     /**
      * borrow an instance. Pool can recycle an old instance or create a new one
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.pool.ObjectPool.borrow)
      */
     public fun borrow(): T
 
     /**
      * Recycle an instance. Should be recycled what was borrowed before otherwise could fail
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.pool.ObjectPool.recycle)
      */
     public fun recycle(instance: T)
 
     /**
      * Dispose the whole pool. None of borrowed objects could be used after the pool gets disposed
      * otherwise it can result in undefined behaviour
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.pool.ObjectPool.dispose)
      */
     public fun dispose()
 
     /**
      * Does pool dispose
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.pool.ObjectPool.close)
      */
     override fun close() {
         dispose()
@@ -35,20 +48,22 @@ public interface ObjectPool<T : Any> : Closeable {
 
 /**
  * A pool implementation of zero capacity that always creates new instances
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.pool.NoPoolImpl)
  */
 public abstract class NoPoolImpl<T : Any> : ObjectPool<T> {
     override val capacity: Int
         get() = 0
 
-    override fun recycle(instance: T) {
-    }
+    override fun recycle(instance: T): Unit = Unit
 
-    override fun dispose() {
-    }
+    override fun dispose(): Unit = Unit
 }
 
 /**
  * A pool that produces at most one instance
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.pool.SingleInstancePool)
  */
 public abstract class SingleInstancePool<T : Any> : ObjectPool<T> {
     private val borrowed = atomic(0)
@@ -70,7 +85,7 @@ public abstract class SingleInstancePool<T : Any> : ObjectPool<T> {
 
     final override fun borrow(): T {
         borrowed.update {
-            if (it != 0) throw IllegalStateException("Instance is already consumed")
+            if (it != 0) error("Instance is already consumed")
             1
         }
 
@@ -83,16 +98,16 @@ public abstract class SingleInstancePool<T : Any> : ObjectPool<T> {
     final override fun recycle(instance: T) {
         if (this.instance.value !== instance) {
             if (this.instance.value == null && borrowed.value != 0) {
-                throw IllegalStateException("Already recycled or an irrelevant instance tried to be recycled")
+                error("Already recycled or an irrelevant instance tried to be recycled")
             }
 
-            throw IllegalStateException("Unable to recycle irrelevant instance")
+            error("Unable to recycle irrelevant instance")
         }
 
         this.instance.value = null
 
         if (!disposed.compareAndSet(false, true)) {
-            throw IllegalStateException("An instance is already disposed")
+            error("An instance is already disposed")
         }
 
         disposeInstance(instance)
@@ -110,10 +125,14 @@ public abstract class SingleInstancePool<T : Any> : ObjectPool<T> {
 
 /**
  * Default object pool implementation.
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.pool.DefaultPool)
  */
 public expect abstract class DefaultPool<T : Any>(capacity: Int) : ObjectPool<T> {
     /**
      * Pool capacity.
+     *
+     * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.pool.DefaultPool.capacity)
      */
     final override val capacity: Int
 
@@ -146,6 +165,8 @@ public expect abstract class DefaultPool<T : Any>(capacity: Int) : ObjectPool<T>
 
 /**
  * Borrows and instance of [T] from the pool, invokes [block] with it and finally recycles it
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.pool.useBorrowed)
  */
 @Deprecated("Use useInstance instead", ReplaceWith("useInstance(block)"))
 public inline fun <T : Any, R> ObjectPool<T>.useBorrowed(block: (T) -> R): R {
@@ -154,6 +175,8 @@ public inline fun <T : Any, R> ObjectPool<T>.useBorrowed(block: (T) -> R): R {
 
 /**
  * Borrows and instance of [T] from the pool, invokes [block] with it and finally recycles it
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.utils.io.pool.useInstance)
  */
 public inline fun <T : Any, R> ObjectPool<T>.useInstance(block: (T) -> R): R {
     val instance = borrow()

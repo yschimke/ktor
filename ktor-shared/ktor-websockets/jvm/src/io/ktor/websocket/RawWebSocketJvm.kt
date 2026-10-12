@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.websocket
@@ -9,19 +9,41 @@ import io.ktor.utils.io.*
 import io.ktor.utils.io.pool.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.channels.*
-import java.nio.*
-import kotlin.coroutines.*
-import kotlin.properties.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.channels.SendChannel
+import java.nio.ByteBuffer
+import kotlin.coroutines.CoroutineContext
+import kotlin.properties.Delegates
+
+@Suppress("FunctionName")
+@Deprecated("Maintained for binary compatibility", level = DeprecationLevel.HIDDEN)
+public fun RawWebSocket(
+    input: ByteReadChannel,
+    output: ByteWriteChannel,
+    maxFrameSize: Long = Int.MAX_VALUE.toLong(),
+    masking: Boolean = false,
+    coroutineContext: CoroutineContext
+): WebSocketSession = RawWebSocket(
+    input,
+    output,
+    maxFrameSize,
+    masking,
+    coroutineContext,
+    WebSocketChannelsConfig.UNLIMITED
+)
 
 /**
  * Creates a RAW web socket session from connection
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.websocket.RawWebSocket)
  *
  * @param input is a [ByteReadChannel] of connection
  * @param output is a [ByteWriteChannel] of connection
  * @param maxFrameSize is an initial [maxFrameSize] value for [WebSocketSession]
  * @param masking is an initial [masking] value for [WebSocketSession]
  * @param coroutineContext is a [CoroutineContext] to execute reading/writing from/to connection
+ * @param channelsConfig is a [WebSocketChannelsConfig] for the incoming and outgoing [Frame] queues
  */
 @Suppress("FunctionName")
 public actual fun RawWebSocket(
@@ -29,21 +51,31 @@ public actual fun RawWebSocket(
     output: ByteWriteChannel,
     maxFrameSize: Long,
     masking: Boolean,
-    coroutineContext: CoroutineContext
-): WebSocketSession = RawWebSocketJvm(input, output, maxFrameSize, masking, coroutineContext)
+    coroutineContext: CoroutineContext,
+    channelsConfig: WebSocketChannelsConfig
+): WebSocketSession = RawWebSocketJvm(
+    input,
+    output,
+    maxFrameSize,
+    masking,
+    coroutineContext,
+    channelsConfig,
+)
 
+@OptIn(InternalAPI::class)
 internal class RawWebSocketJvm(
     input: ByteReadChannel,
     output: ByteWriteChannel,
     maxFrameSize: Long = Int.MAX_VALUE.toLong(),
     masking: Boolean = false,
     coroutineContext: CoroutineContext,
-    pool: ObjectPool<ByteBuffer> = KtorDefaultPool
+    channelsConfig: WebSocketChannelsConfig,
+    pool: ObjectPool<ByteBuffer> = KtorDefaultPool,
 ) : WebSocketSession {
     private val socketJob: CompletableJob = Job(coroutineContext[Job])
-    private val filtered = Channel<Frame>(Channel.RENDEZVOUS)
-
     override val coroutineContext: CoroutineContext = coroutineContext + socketJob + CoroutineName("raw-ws")
+
+    private val filtered = Channel.from<Frame>(channelsConfig.incoming)
     override val incoming: ReceiveChannel<Frame> get() = filtered
     override val outgoing: SendChannel<Frame> get() = writer.outgoing
 
@@ -58,8 +90,17 @@ internal class RawWebSocketJvm(
         writer.masking = newValue
     }
 
-    internal val writer: WebSocketWriter = WebSocketWriter(output, this.coroutineContext, masking, pool)
-    internal val reader: WebSocketReader = WebSocketReader(input, this.coroutineContext, maxFrameSize, pool)
+    internal val writer: WebSocketWriter =
+        WebSocketWriter(
+            writeChannel = output,
+            coroutineContext = this.coroutineContext,
+            masking = masking,
+            pool = pool,
+            queueConfig = channelsConfig.outgoing
+        )
+
+    internal val reader: WebSocketReader =
+        WebSocketReader(input, this.coroutineContext, maxFrameSize, pool, queueConfig = channelsConfig.incoming)
 
     init {
         launch {
@@ -68,10 +109,12 @@ internal class RawWebSocketJvm(
                     filtered.send(frame)
                 }
             } catch (cause: FrameTooBigException) {
-                outgoing.send(Frame.Close(CloseReason(CloseReason.Codes.TOO_BIG, cause.message)))
+                val reason = CloseReason.truncated(CloseReason.Codes.TOO_BIG, cause.message)
+                outgoing.trySend(Frame.Close(reason))
                 filtered.close(cause)
             } catch (cause: ProtocolViolationException) {
-                outgoing.send(Frame.Close(CloseReason(CloseReason.Codes.PROTOCOL_ERROR, cause.message)))
+                val reason = CloseReason.truncated(CloseReason.Codes.PROTOCOL_ERROR, cause.message)
+                outgoing.trySend(Frame.Close(reason))
                 filtered.close(cause)
             } catch (cause: CancellationException) {
                 reader.incoming.cancel(cause)

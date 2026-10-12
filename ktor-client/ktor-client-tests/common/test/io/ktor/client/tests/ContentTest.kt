@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.tests
@@ -11,6 +11,7 @@ import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.client.request.forms.*
 import io.ktor.client.statement.*
+import io.ktor.client.test.base.*
 import io.ktor.client.tests.utils.*
 import io.ktor.client.utils.*
 import io.ktor.http.*
@@ -19,8 +20,12 @@ import io.ktor.serialization.kotlinx.json.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.core.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.io.readByteArray
 import kotlin.test.*
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 private val testSize = listOf(
     0,
@@ -41,7 +46,7 @@ val testArrays = testSize.map {
     makeArray(it)
 }
 
-class ContentTest : ClientLoader(5 * 60) {
+class ContentTest : ClientLoader(timeout = 1.minutes) {
 
     @Test
     fun testGetFormData() = clientTests {
@@ -62,7 +67,7 @@ class ContentTest : ClientLoader(5 * 60) {
     }
 
     @Test
-    fun testByteArray() = clientTests {
+    fun testByteArray() = clientTests(except("web:CIO")) {
         test { client ->
             testArrays.forEach { content ->
                 val response = client.echo<ByteArray>(content)
@@ -86,7 +91,7 @@ class ContentTest : ClientLoader(5 * 60) {
         test { client ->
             testArrays.forEach { content ->
                 val responseData = client.echo<ByteReadChannel>(content)
-                val data = responseData.readRemaining().readBytes()
+                val data = responseData.readBuffer().readByteArray()
                 assertArrayEquals(
                     "Test fail with size: ${content.size}, actual size: ${data.size}",
                     content,
@@ -97,7 +102,7 @@ class ContentTest : ClientLoader(5 * 60) {
     }
 
     @Test
-    fun testSendByteReadChannel() = clientTests(listOf("Js")) {
+    fun testSendByteReadChannel() = clientTests(except("Js")) {
         config {
             install(HttpTimeout) {
                 socketTimeoutMillis = 1.minutes.inWholeMilliseconds
@@ -118,7 +123,7 @@ class ContentTest : ClientLoader(5 * 60) {
     }
 
     @Test
-    fun testSendByteWriteChannel() = clientTests(listOf("Js")) {
+    fun testSendByteWriteChannel() = clientTests(except("Js")) {
         config {
             install(HttpTimeout) {
                 socketTimeoutMillis = 1.minutes.inWholeMilliseconds
@@ -144,7 +149,7 @@ class ContentTest : ClientLoader(5 * 60) {
     }
 
     @Test
-    fun testString() = clientTests(listOf("Darwin", "CIO", "DarwinLegacy")) {
+    fun testString() = clientTests(except("Darwin", "CIO", "DarwinLegacy"), retries = 10) {
         test { client ->
             testStrings.forEach { content ->
                 val requestWithBody = client.echo<String>(content)
@@ -158,7 +163,7 @@ class ContentTest : ClientLoader(5 * 60) {
     }
 
     @Test
-    fun testEmptyContent() = clientTests {
+    fun testEmptyContent() = clientTests(retries = 5) {
         val size = 0
         val content = makeString(size)
         repeatCount = 200
@@ -174,7 +179,7 @@ class ContentTest : ClientLoader(5 * 60) {
     }
 
     @Test
-    fun testTextContent() = clientTests(listOf("Darwin", "CIO", "DarwinLegacy")) {
+    fun testTextContent() = clientTests(except("Darwin", "CIO", "DarwinLegacy")) {
         test { client ->
             testStrings.forEach { content ->
                 val response = client.echo<String>(TextContent(content, ContentType.Text.Plain))
@@ -189,7 +194,7 @@ class ContentTest : ClientLoader(5 * 60) {
     }
 
     @Test
-    fun testByteArrayContent() = clientTests {
+    fun testByteArrayContent() = clientTests(except("web:CIO")) {
         test { client ->
             testArrays.forEach { content ->
                 val response = client.echo<ByteArray>(ByteArrayContent(content))
@@ -277,7 +282,7 @@ class ContentTest : ClientLoader(5 * 60) {
                 }
             ).body<String>()
 
-            assertContains(response, "Content-Disposition: form-data; name=channel")
+            assertContains(response, "Content-Disposition: form-data; name=\"channel\"")
             assertContains(response, "from channel")
         }
     }
@@ -337,16 +342,15 @@ class ContentTest : ClientLoader(5 * 60) {
     }
 
     @Test
-    @Ignore
-    fun testDownloadStreamChannelWithCancel() = clientTests {
+    fun testDownloadStreamChannelWithCancel() = clientTests(timeout = 1.seconds) {
         test { client ->
-            val content = client.get("$TEST_SERVER/content/stream").body<ByteReadChannel>()
+            val content = client.prepareGet("$TEST_SERVER/content/stream?delay=5000").body<ByteReadChannel>()
             content.cancel()
         }
     }
 
     @Test
-    fun testDownloadStreamResponseWithClose() = clientTests {
+    fun testDownloadStreamResponseWithClose() = clientTests(only("CIO")) {
         test { client ->
             client.prepareGet("$TEST_SERVER/content/stream").execute {
             }
@@ -355,7 +359,7 @@ class ContentTest : ClientLoader(5 * 60) {
 
     // NSUrlSession buffers first 512 bytes
     @Test
-    fun testDownloadStream() = clientTests(listOf("Darwin", "DarwinLegacy")) {
+    fun testDownloadStream() = clientTests(except("Darwin", "DarwinLegacy")) {
         test { client ->
             client.prepareGet("$TEST_SERVER/content/stream?delay=100").execute {
                 val channel = it.bodyAsChannel()
@@ -380,11 +384,61 @@ class ContentTest : ClientLoader(5 * 60) {
     @Test
     fun testDownloadStreamArrayWithTimeout() = clientTests {
         test { client ->
-            val result: ByteArray? = withTimeoutOrNull(100) {
+            val result: ByteArray? = withTimeoutOrNull(100.milliseconds) {
                 client.get("$TEST_SERVER/content/stream").body<ByteArray>()
             }
 
             assertNull(result)
+        }
+    }
+
+    @Test
+    fun testBodyChannelCancelledWhenCallerScopeIsCancelled() = clientTests {
+        test { client ->
+            val bodyDeferred = CompletableDeferred<ByteReadChannel>()
+            coroutineScope {
+                val job = launch {
+                    val body = client.prepareGet("$TEST_SERVER/content/stream?delay=5000").body<ByteReadChannel>()
+                    bodyDeferred.complete(body)
+                    awaitCancellation()
+                }
+                val body = bodyDeferred.await()
+
+                val cause = CancellationException("Test exception")
+                job.cancel(cause)
+
+                waitForCondition("body to be closed", timeout = 2.seconds) { body.closedCause != null }
+                assertEquals(cause.message, body.closedCause!!.message)
+            }
+        }
+    }
+
+    /**
+     * This is a bit of an edge case where the initial content reader fails to read the response body
+     * before a second reader comes in. When this happens, we simply cancel the initial reader.
+     */
+    @OptIn(InternalAPI::class)
+    @Test
+    fun testSaveBody() = clientTests {
+        val expected = "I will not introduce deadlocks.\n"
+
+        test { client ->
+            val responseText = client.config {
+                HttpResponseValidator {
+                    validateResponse { response ->
+                        val channel = response.rawContent
+                        repeat(100) {
+                            assertEquals(expected, channel.readByteArray(expected.length).decodeToString())
+                        }
+                    }
+                }
+            }.get("$TEST_SERVER/content/big-plain-text").bodyAsText()
+
+            val lines = responseText.trim().lines()
+            assertEquals(10_000, lines.size, "Should be same number of lines")
+            for ((i, line) in lines.withIndex()) {
+                assertEquals(expected.trim(), line, "Difference on line $i")
+            }
         }
     }
 

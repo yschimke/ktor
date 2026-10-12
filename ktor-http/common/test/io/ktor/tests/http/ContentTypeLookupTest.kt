@@ -9,10 +9,13 @@ import kotlin.test.*
 
 class ContentTypeLookupTest {
     private val plainText = listOf(ContentType.Text.Plain)
+    private val markdownText = listOf(ContentType.Text.Markdown)
 
     @Test
     fun testExtensionSingle() {
         assertEquals(plainText, ContentType.fromFileExtension(".txt"))
+        assertEquals(markdownText, ContentType.fromFileExtension(".md"))
+        assertEquals(markdownText, ContentType.fromFileExtension(".markdown"))
     }
 
     @Test
@@ -23,6 +26,35 @@ class ContentTypeLookupTest {
                 ContentType.parse("application/x-rpm")
             ),
             ContentType.fromFileExtension(".rpm")
+        )
+
+        assertEquals(
+            listOf(
+                ContentType.parse("application/macbinary"),
+                ContentType.parse("application/mac-binary"),
+                ContentType.parse("application/octet-stream"),
+                ContentType.parse("application/x-binary"),
+                ContentType.parse("application/x-macbinary")
+            ),
+            ContentType.fromFileExtension(".bin")
+        )
+
+        assertEquals(
+            listOf(
+                ContentType.parse("application/zip"),
+                ContentType.parse("application/x-compressed"),
+                ContentType.parse("application/x-zip-compressed"),
+                ContentType.parse("multipart/x-zip")
+            ),
+            ContentType.fromFileExtension(".zip")
+        )
+
+        assertEquals(
+            listOf(
+                ContentType.parse("text/javascript"),
+                ContentType.parse("application/javascript"),
+            ),
+            ContentType.fromFileExtension(".js")
         )
     }
 
@@ -85,5 +117,6 @@ class ContentTypeLookupTest {
     @Test
     fun testLookupExtensionByContentType() {
         assertEquals(listOf("djvu"), ContentType.parse("image/vnd.djvu").fileExtensions())
+        assertEquals(listOf("markdown", "md"), ContentType.Text.Markdown.fileExtensions())
     }
 }

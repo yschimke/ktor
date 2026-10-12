@@ -6,26 +6,35 @@ package io.ktor.serialization.kotlinx
 
 import io.ktor.http.*
 import io.ktor.http.content.*
+import io.ktor.openapi.*
 import io.ktor.serialization.*
-import io.ktor.util.*
-import io.ktor.util.pipeline.*
 import io.ktor.util.reflect.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.charsets.*
 import io.ktor.utils.io.core.*
 import kotlinx.coroutines.flow.*
+import kotlinx.io.*
 import kotlinx.serialization.*
-import kotlin.jvm.*
+import kotlin.reflect.KType
 
 /**
  * Creates a converter serializing with the specified string [format]
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.kotlinx.KotlinxSerializationConverter)
  */
 @OptIn(ExperimentalSerializationApi::class, InternalSerializationApi::class)
 public class KotlinxSerializationConverter(
     private val format: SerialFormat,
-) : ContentConverter {
+) : ContentConverter, JsonSchemaInference {
 
     private val extensions: List<KotlinxSerializationExtension> = extensions(format)
+
+    /**
+     * JSON schema inference that respects the [SerializersModule] of the wrapped [format],
+     * so contextual serializers registered by the caller are reflected in the generated schema.
+     */
+    private val schemaInference: JsonSchemaInference =
+        KotlinxSerializerJsonSchemaInference(format.serializersModule)
 
     init {
         require(format is BinaryFormat || format is StringFormat) {
@@ -33,6 +42,9 @@ public class KotlinxSerializationConverter(
         }
     }
 
+    override fun buildSchema(type: KType): JsonSchema = schemaInference.buildSchema(type)
+
+    @OptIn(InternalAPI::class)
     override suspend fun serialize(
         contentType: ContentType,
         charset: Charset,
@@ -54,18 +66,20 @@ public class KotlinxSerializationConverter(
     }
 
     override suspend fun deserialize(charset: Charset, typeInfo: TypeInfo, content: ByteReadChannel): Any? {
-        val fromExtension = extensions.asFlow()
-            .map { it.deserialize(charset, typeInfo, content) }
-            .firstOrNull { it != null || content.isClosedForRead }
-        if (extensions.isNotEmpty() && (fromExtension != null || content.isClosedForRead)) return fromExtension
+        val contentPacket = content.readBuffer()
+
+        for (ext in extensions) {
+            return ext.deserialize(charset, typeInfo, ByteReadChannel(contentPacket)) ?: continue
+        }
 
         val serializer = format.serializersModule.serializerForTypeInfo(typeInfo)
-        val contentPacket = content.readRemaining()
 
         try {
             return when (format) {
                 is StringFormat -> format.decodeFromString(serializer, contentPacket.readText(charset))
-                is BinaryFormat -> format.decodeFromByteArray(serializer, contentPacket.readBytes())
+
+                is BinaryFormat -> format.decodeFromByteArray(serializer, contentPacket.readByteArray())
+
                 else -> {
                     contentPacket.discard()
                     error("Unsupported format $format")
@@ -103,6 +117,8 @@ public class KotlinxSerializationConverter(
 /**
  * Register kotlinx.serialization converter into [ContentNegotiation] plugin
  * with the specified [contentType] and binary [format] (such as CBOR, ProtoBuf)
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.kotlinx.serialization)
  */
 public fun Configuration.serialization(contentType: ContentType, format: BinaryFormat) {
     register(contentType, KotlinxSerializationConverter(format))
@@ -111,6 +127,8 @@ public fun Configuration.serialization(contentType: ContentType, format: BinaryF
 /**
  * Register kotlinx.serialization converter into [ContentNegotiation] plugin
  * with the specified [contentType] and string [format] (such as Json)
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.kotlinx.serialization)
  */
 public fun Configuration.serialization(contentType: ContentType, format: StringFormat) {
     register(contentType, KotlinxSerializationConverter(format))

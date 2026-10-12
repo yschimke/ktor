@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.util
@@ -7,10 +7,16 @@ package io.ktor.util
 import io.ktor.util.cio.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.core.*
-import kotlinx.coroutines.*
-import java.nio.*
-import java.util.zip.*
-import kotlin.coroutines.*
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.io.EOFException
+import java.nio.ByteBuffer
+import java.util.zip.CRC32
+import java.util.zip.Checksum
+import java.util.zip.Deflater
+import java.util.zip.Inflater
+import kotlin.coroutines.CoroutineContext
 
 private const val GZIP_HEADER_SIZE: Int = 10
 
@@ -37,6 +43,8 @@ private infix fun Int.has(flag: Int) = this and flag != 0
 
 /**
  * Implementation of Deflate [Encoder].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.Deflate)
  */
 public val Deflate: Encoder = object : Encoder {
     override fun encode(source: ByteReadChannel, coroutineContext: CoroutineContext): ByteReadChannel =
@@ -51,6 +59,8 @@ public val Deflate: Encoder = object : Encoder {
 
 /**
  * Implementation of GZip [Encoder].
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.util.GZip)
  */
 public val GZip: Encoder = object : Encoder {
     override fun encode(source: ByteReadChannel, coroutineContext: CoroutineContext): ByteReadChannel =
@@ -63,14 +73,17 @@ public val GZip: Encoder = object : Encoder {
         inflate(source, coroutineContext = coroutineContext)
 }
 
+private val InflateWriterCoroutineName = CoroutineName("encoder-inflate-writer")
+
 @OptIn(DelicateCoroutinesApi::class)
 private fun inflate(
     source: ByteReadChannel,
     gzip: Boolean = true,
     coroutineContext: CoroutineContext
-): ByteReadChannel = GlobalScope.writer(coroutineContext) {
+): ByteReadChannel = GlobalScope.writer(coroutineContext + InflateWriterCoroutineName) {
     val readBuffer = KtorDefaultPool.borrow()
     val writeBuffer = KtorDefaultPool.borrow()
+
     val inflater = Inflater(true)
     val checksum = CRC32()
 
@@ -112,7 +125,6 @@ private fun inflate(
         while (!source.isClosedForRead) {
             if (source.readAvailable(readBuffer) <= 0) continue
             readBuffer.flip()
-
             inflater.setInput(readBuffer.array(), readBuffer.position(), readBuffer.remaining())
 
             while (!inflater.needsInput() && !inflater.finished()) {
@@ -128,7 +140,9 @@ private fun inflate(
         readBuffer.flip()
 
         while (!inflater.finished()) {
-            totalSize += inflater.inflateTo(channel, writeBuffer, checksum)
+            val inflated = inflater.inflateTo(channel, writeBuffer, checksum)
+            if (inflated == 0 && inflater.needsInput()) throw EOFException("Compressed input is incomplete.")
+            totalSize += inflated
             readBuffer.position(readBuffer.limit() - inflater.remaining)
         }
 
@@ -159,6 +173,7 @@ private suspend fun Inflater.inflateTo(channel: ByteWriteChannel, buffer: ByteBu
     buffer.clear()
 
     val inflated = inflate(buffer.array(), buffer.position(), buffer.remaining())
+    check(inflated > 0 || needsInput() || finished()) { "Inflater made no progress." }
     buffer.position(buffer.position() + inflated)
     buffer.flip()
 

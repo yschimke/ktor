@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-2022 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2025 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.client.tests.utils
 
-import kotlinx.atomicfu.*
-import kotlin.test.*
+import kotlinx.atomicfu.atomic
+import kotlin.test.assertEquals
 
 internal class LogMatcher(
     private val originPredicates: MutableList<LogPredicate>
@@ -41,9 +41,11 @@ internal class LogMatcher(
 
         when (val predicate = predicates[index++]) {
             is Changing -> return
+
             is Line -> if (predicate.value.lowercase() != value.lowercase()) {
                 fail("Line doesn't match")
             }
+
             is Optional -> {
                 if (predicate.value.lowercase() == value.lowercase()) return
                 matchLine(value)

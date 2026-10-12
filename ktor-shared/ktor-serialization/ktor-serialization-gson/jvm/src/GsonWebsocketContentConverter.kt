@@ -8,12 +8,13 @@ import com.google.gson.*
 import io.ktor.serialization.*
 import io.ktor.util.reflect.*
 import io.ktor.utils.io.charsets.*
-import io.ktor.utils.io.jvm.javaio.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
 
 /**
  * GSON converter for the [WebSockets] plugin
+ *
+ * [Report a problem](https://ktor.io/feedback/?fqname=io.ktor.serialization.gson.GsonWebsocketContentConverter)
  */
 public class GsonWebsocketContentConverter(private val gson: Gson = Gson()) : WebsocketContentConverter {
     override suspend fun serialize(charset: Charset, typeInfo: TypeInfo, value: Any?): Frame {

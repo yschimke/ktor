@@ -7,6 +7,20 @@ package io.ktor.server.engine
 import java.lang.reflect.*
 import java.net.*
 
+/**
+ * Returns `true` if this classloader is compatible with Ktor's auto-reload mechanism.
+ *
+ * Auto-reload uses [OverridingClassLoader], which extends [URLClassLoader] and therefore requires
+ * a standard URL-based classpath. Non-standard classloaders — such as Spring Boot's
+ * `LaunchedClassLoader` or Amper's fat-JAR launcher — use custom URL schemes (e.g. `jar:nested:/`)
+ * that [URLClassLoader] cannot handle, leading to duplicate class identities and [LinkageError].
+ *
+ * JDK's built-in `AppClassLoader` is not a [URLClassLoader] since JDK 11 but is still compatible.
+ */
+internal fun ClassLoader.supportsAutoReload(): Boolean =
+    this is URLClassLoader ||
+        javaClass.name == "jdk.internal.loader.ClassLoaders\$AppClassLoader"
+
 internal fun ClassLoader.allURLs(): Set<URL> {
     val parentUrls = parent?.allURLs() ?: emptySet()
     if (this is URLClassLoader) {
@@ -52,7 +66,7 @@ private fun ClassLoader.urlClassPath(): List<URL>? {
  * Unlike the old way, this doesn't require any black magic so works well on all JDKs
  * from JDK6 to the latest.
  */
-private fun ClassLoader.urlClassPathByPackagesList(): List<URL>? {
+private fun ClassLoader.urlClassPathByPackagesList(): List<URL> {
     val allPackagePaths = ClassLoaderDelegate(this).packagesList().map { it.replace('.', '/') }
         .flatMapTo(HashSet<String>()) { packageName ->
             val segments = packageName.split('/')
@@ -69,9 +83,9 @@ private fun Class<*>.findURLClassPathField(): Field? {
 }
 
 /**
- * This is auxillary classloader that is not used for loading classes. The purpose is just
+ * This is auxiliary classloader that is not used for loading classes. The purpose is just
  * to get access to [getPackages] function that is unfortunately protected.
  */
 private class ClassLoaderDelegate(delegate: ClassLoader) : ClassLoader(delegate) {
-    internal fun packagesList(): List<String> = getPackages().map { it.name }
+    fun packagesList(): List<String> = getPackages().map { it.name }
 }

@@ -11,6 +11,7 @@ private const val HTTP_ENABLE_KEY = "HTTPEnable"
 private const val HTTP_PROXY_KEY = "HTTPProxy"
 private const val HTTP_PORT_KEY = "HTTPPort"
 
+@Suppress("DEPRECATION")
 internal fun NSURLSessionConfiguration.setupProxy(config: DarwinLegacyClientEngineConfig) {
     val proxy = config.proxy ?: return
     val url = proxy.url
@@ -18,7 +19,6 @@ internal fun NSURLSessionConfiguration.setupProxy(config: DarwinLegacyClientEngi
     when (url.protocol) {
         URLProtocol.HTTP -> setupHttpProxy(url)
         URLProtocol.HTTPS -> setupHttpProxy(url)
-//        URLProtocol.SOCKS -> setupSocksProxy(url)
         else -> error("Proxy type ${url.protocol.name} is unsupported by Darwin client engine.")
     }
 }

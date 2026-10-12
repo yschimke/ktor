@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package io.ktor.server.netty.http1
@@ -10,16 +10,17 @@ import io.ktor.utils.io.*
 import io.netty.buffer.*
 import io.netty.channel.*
 import io.netty.handler.codec.http.*
+import kotlinx.coroutines.*
 import kotlin.coroutines.*
 
 internal class NettyHttp1ApplicationCall(
     application: Application,
     context: ChannelHandlerContext,
-    httpRequest: HttpRequest,
+    val httpRequest: HttpRequest,
     requestBodyChannel: ByteReadChannel?,
     engineContext: CoroutineContext,
-    userContext: CoroutineContext
-) : NettyApplicationCall(application, context, httpRequest) {
+    override val coroutineContext: CoroutineContext,
+) : NettyApplicationCall(application, context, httpRequest), CoroutineScope {
 
     override val request = NettyHttp1ApplicationRequest(
         this,
@@ -33,7 +34,7 @@ internal class NettyHttp1ApplicationCall(
         this,
         context,
         engineContext,
-        userContext,
+        coroutineContext,
         httpRequest.protocolVersion()
     )
 
